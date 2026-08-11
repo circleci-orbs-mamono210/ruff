@@ -1,0 +1,44 @@
+---
+description: >
+  Migrate a repository that used flake8 and isort. Ruff 0.16.0 enables a much
+  larger rule set than the 'E4,E7,E9,F' it shipped with before, so a first
+  run against an established codebase usually reports a great deal. Pinning
+  the old default set and adding back only the rules the previous tooling
+  covered keeps the change reviewable, and 'exit-zero' on a second reporting
+  step shows how much work adopting the full set would be.
+usage:
+  version: 2.1
+  orbs:
+    ruff: orbss/ruff@x.y.z
+  jobs:
+    execute-ruff:
+      executor: ruff/default
+      steps:
+        - checkout
+        - ruff/install:
+            version: 0.16.2
+
+        # 'selected-rules' deliberately narrows the selection back to the
+        # pre-0.16.0 default set, which contains neither the isort rules nor
+        # 'E501', so both are added back explicitly: 'I' replaces isort and
+        # 'E501' replaces the flake8 line length check.
+        - ruff/check:
+            extend-selected-rules: E501,I
+            line-length: "100"
+            selected-rules: E4,E7,E9,F
+            targets: src
+
+        # Report only. Shows what the current default set would add, without
+        # blocking the pipeline on it.
+        - ruff/check:
+            exit-zero: true
+            output-file: reports/ruff-full.txt
+            statistics: true
+            targets: src
+
+        - store_artifacts:
+            path: reports
+  workflows:
+    use-my-orb:
+      jobs:
+        - execute-ruff

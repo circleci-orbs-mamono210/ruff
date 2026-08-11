@@ -1,0 +1,22 @@
+---
+description: >
+  Check the checked out code with the default parameters. The job fails as
+  soon as Ruff reports a violation, and 'fix: never' keeps the checkout
+  untouched even if the project config enables fixing.
+usage:
+  version: 2.1
+  orbs:
+    ruff: orbss/ruff@x.y.z
+  jobs:
+    execute-ruff:
+      executor: ruff/default
+      steps:
+        - checkout
+        - ruff/install:
+            version: 0.16.2
+        - ruff/check:
+            statistics: true
+  workflows:
+    use-my-orb:
+      jobs:
+        - execute-ruff

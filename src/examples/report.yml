@@ -1,0 +1,31 @@
+---
+description: >
+  Keep the report as a build artifact and still fail the job. The reporting
+  run uses 'exit-zero' so the artifact is stored even when Ruff finds
+  violations, and the second run is the one that decides whether the job
+  passes. Ruff never writes colour into 'output-file', so the artifact stays
+  free of ANSI escape sequences without any extra setting.
+usage:
+  version: 2.1
+  orbs:
+    ruff: orbss/ruff@x.y.z
+  jobs:
+    execute-ruff:
+      executor: ruff/default
+      steps:
+        - checkout
+        - ruff/install:
+            version: 0.16.2
+        - ruff/check:
+            exit-zero: true
+            output-file: reports/ruff.json
+            output-format: json
+            tee: false
+        - store_artifacts:
+            path: reports
+        - ruff/check:
+            color: always
+  workflows:
+    use-my-orb:
+      jobs:
+        - execute-ruff

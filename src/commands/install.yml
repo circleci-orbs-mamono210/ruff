@@ -1,0 +1,24 @@
+---
+description: >
+  Install Ruff with pip. Only needed when the executor image does not bundle
+  Ruff already, for example when running on 'cimg/python'.
+
+  Ruff has no plugin system, so unlike flake8 there is nothing to install
+  alongside it. Every rule Ruff can report is built into the binary and is
+  selected with the 'selected-rules' parameter of 'ruff/check'.
+parameters:
+  version:
+    default: ''
+    description: >
+      Version of Ruff to install, for example '0.16.2'. Empty installs the
+      latest release. Pinning is strongly recommended, because Ruff is
+      pre-1.0 and a new release can add rules, promote preview rules to
+      stable or change formatter output, any of which can turn a green
+      pipeline red.
+    type: string
+steps:
+  - run:
+      name: Install Ruff
+      environment:
+        PARAM_VERSION: '<<parameters.version>>'
+      command: <<include(scripts/install.sh)>>

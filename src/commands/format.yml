@@ -1,0 +1,207 @@
+---
+description: >
+  Execute 'ruff format', the Ruff formatter.
+
+  The default mode is 'check', which reports the files that would be
+  reformatted and leaves the checkout untouched.
+parameters:
+  cache-dir:
+    default: ''
+    description: >
+      Path to Ruff's cache directory (ruff '--cache-dir'). Empty keeps Ruff's
+      default of '.ruff_cache' in the project root.
+    type: string
+  color:
+    default: auto
+    description: >
+      Colour the output (ruff '--color'). 'auto' colours only when stdout is
+      a terminal, so a CircleCI job produces no colour. 'always' is useful on
+      CircleCI, where the log renders ANSI escape sequences even though it is
+      not a TTY, and makes a 'diff' mode run considerably easier to read.
+    enum: ["auto", "always", "never"]
+    type: enum
+  config-file:
+    default: ''
+    description: >
+      Path of a TOML config file to use (ruff '--config'), for example
+      'build/ruff.toml'. Empty lets Ruff discover 'pyproject.toml',
+      'ruff.toml' or '.ruff.toml'. Cannot be combined with 'isolated'; Ruff
+      rejects that combination itself.
+    type: string
+  config-overrides:
+    default: ''
+    description: >
+      Newline separated list of TOML 'KEY = VALUE' pairs, each passed as its
+      own ruff '--config' argument, for example
+      'format.quote-style = "single"'. These take precedence over every
+      config file. One pair per line, because a TOML pair contains
+      whitespace and cannot be split on it. Blank lines are ignored.
+    type: string
+  excluded-paths:
+    default: ''
+    description: >
+      Comma separated list of file patterns to omit from the run
+      (ruff '--exclude'). This REPLACES Ruff's default exclusion list, so
+      prefer 'extend-excluded-paths' unless that is intended.
+    type: string
+  exit-non-zero-on-format:
+    default: false
+    description: >
+      Fail the step when Ruff reformatted any file, even though the
+      formatting itself succeeded (ruff '--exit-non-zero-on-format'). Only
+      meaningful in 'write' mode, where it turns a job that rewrites files
+      into one that also reports having done so.
+    type: boolean
+  extend-excluded-paths:
+    default: ''
+    description: >
+      Comma separated list of extra file patterns to omit on top of Ruff's
+      default exclusion list (ruff '--extend-exclude').
+    type: string
+  extensions:
+    default: ''
+    description: >
+      Whitespace separated list of 'extension:language' mappings
+      (ruff '--extension'), for example 'ipy:ipynb'. Each item is passed as
+      a separate argument.
+    type: string
+  extra-args:
+    default: ''
+    description: >
+      Whitespace separated list of extra arguments appended to the
+      'ruff format' invocation, for options this command does not expose.
+      Each item becomes a separate argument. Shell quoting is not
+      reinterpreted and pathname expansion is not performed.
+    type: string
+  force-exclude:
+    default: auto
+    description: >
+      Whether the exclusion patterns also apply to paths passed on the
+      command line (ruff '--force-exclude' / '--no-force-exclude'). 'auto'
+      passes nothing and lets the config file decide.
+    enum: ["auto", "enabled", "disabled"]
+    type: enum
+  isolated:
+    default: false
+    description: >
+      Ignore every config file (ruff '--isolated'), so only the parameters of
+      this command decide the outcome. Ruff itself rejects this in
+      combination with a 'config-file' path, but 'config-overrides' and
+      'line-length' are inline settings rather than files, so both still
+      apply under 'isolated'.
+    type: boolean
+  line-length:
+    default: ''
+    description: >
+      Maximum line length the formatter wraps to (ruff '--line-length').
+      Empty keeps Ruff's default of 88 or the value from the config file.
+      Keep this in step with the 'line-length' used by 'ruff/check', because
+      the formatter and the 'E501' rule are configured independently on the
+      command line.
+    type: string
+  mode:
+    default: check
+    description: >
+      What the formatter does with the files.
+
+      'check' passes '--check', reports which files would be reformatted and
+      fails the step if there are any, leaving the checkout untouched. This
+      is the mode a CI gate wants.
+
+      'diff' passes '--diff' and additionally prints the exact changes, which
+      makes a failure actionable from the log alone.
+
+      'write' passes neither and REWRITES the files in place, which only
+      makes sense when the job goes on to commit or otherwise use the result.
+    enum: ["check", "diff", "write"]
+    type: enum
+  no-cache:
+    default: false
+    description: >
+      Disable cache reads (ruff '--no-cache').
+    type: boolean
+  output-format:
+    default: default
+    description: >
+      Serialization format used when reporting the files that would be
+      reformatted (ruff '--output-format'). Only applies in 'check' mode.
+      'default' passes no flag, so Ruff's own default of 'full' applies, and
+      'github' emits workflow annotations.
+    enum: ["default", "concise", "full", "json", "json-lines", "junit",
+           "grouped", "github", "gitlab", "pylint", "rdjson", "azure",
+           "sarif"]
+    type: enum
+  preview:
+    default: auto
+    description: >
+      Whether unstable formatting is enabled (ruff '--preview' /
+      '--no-preview'). 'auto' passes nothing and lets the config file decide.
+      Preview formatting can change between Ruff releases, so enabling it
+      makes an unpinned Ruff version considerably riskier.
+    enum: ["auto", "enabled", "disabled"]
+    type: enum
+  respect-gitignore:
+    default: auto
+    description: >
+      Whether '.gitignore' and other standard ignore files exclude paths
+      from the run (ruff '--respect-gitignore' / '--no-respect-gitignore').
+      'auto' passes nothing and lets the config file decide.
+    enum: ["auto", "enabled", "disabled"]
+    type: enum
+  target-version:
+    default: default
+    description: >
+      Minimum Python version the formatted code must support
+      (ruff '--target-version'). 'default' passes no flag, so Ruff infers the
+      version from 'requires-python' in 'pyproject.toml' and otherwise falls
+      back to its own default.
+    enum: ["default", "py37", "py38", "py39", "py310", "py311", "py312",
+           "py313", "py314", "py315"]
+    type: enum
+  targets:
+    default: '.'
+    description: >
+      Whitespace separated list of source files or directories to format.
+
+      Since Ruff 0.16.0 the formatter also reformats Python code blocks
+      inside Markdown files, so a target of '.' reaches every '.md' file in
+      the repository. Add '*.md' to 'extend-excluded-paths' when that is not
+      wanted.
+    type: string
+  verbosity:
+    default: default
+    description: >
+      Log verbosity. 'verbose' passes '--verbose' and reports what Ruff is
+      doing, including which config file was resolved. 'quiet' passes
+      '--quiet'. 'silent' passes '--silent' and prints nothing while still
+      exiting non-zero in 'check' and 'diff' mode.
+    enum: ["default", "verbose", "quiet", "silent"]
+    type: enum
+steps:
+  - run:
+      name: Show Ruff version
+      command: <<include(scripts/show-version.sh)>>
+  - run:
+      name: Execute ruff format
+      environment:
+        PARAM_CACHE_DIR: '<<parameters.cache-dir>>'
+        PARAM_COLOR: '<<parameters.color>>'
+        PARAM_CONFIG_FILE: '<<parameters.config-file>>'
+        PARAM_CONFIG_OVERRIDES: '<<parameters.config-overrides>>'
+        PARAM_EXCLUDED_PATHS: '<<parameters.excluded-paths>>'
+        PARAM_EXIT_NON_ZERO_ON_FORMAT: '<<parameters.exit-non-zero-on-format>>'
+        PARAM_EXTEND_EXCLUDED_PATHS: '<<parameters.extend-excluded-paths>>'
+        PARAM_EXTENSIONS: '<<parameters.extensions>>'
+        PARAM_EXTRA_ARGS: '<<parameters.extra-args>>'
+        PARAM_FORCE_EXCLUDE: '<<parameters.force-exclude>>'
+        PARAM_ISOLATED: '<<parameters.isolated>>'
+        PARAM_LINE_LENGTH: '<<parameters.line-length>>'
+        PARAM_MODE: '<<parameters.mode>>'
+        PARAM_NO_CACHE: '<<parameters.no-cache>>'
+        PARAM_OUTPUT_FORMAT: '<<parameters.output-format>>'
+        PARAM_PREVIEW: '<<parameters.preview>>'
+        PARAM_RESPECT_GITIGNORE: '<<parameters.respect-gitignore>>'
+        PARAM_TARGETS: '<<parameters.targets>>'
+        PARAM_TARGET_VERSION: '<<parameters.target-version>>'
+        PARAM_VERBOSITY: '<<parameters.verbosity>>'
+      command: <<include(scripts/format.sh)>>

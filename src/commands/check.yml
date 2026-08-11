@@ -1,0 +1,353 @@
+---
+description: >
+  Execute 'ruff check', the Ruff linter.
+parameters:
+  cache-dir:
+    default: ''
+    description: >
+      Path to Ruff's cache directory (ruff '--cache-dir'). Empty keeps Ruff's
+      default of '.ruff_cache' in the project root. Point this at a path
+      covered by 'save_cache' to reuse results across builds.
+    type: string
+  color:
+    default: auto
+    description: >
+      Colour the output (ruff '--color'). 'auto' colours only when stdout is
+      a terminal, so a CircleCI job produces no colour. 'always' is useful on
+      CircleCI, where the log renders ANSI escape sequences even though it is
+      not a TTY. Ruff never writes colour into 'output-file' regardless of
+      this setting.
+    enum: ["auto", "always", "never"]
+    type: enum
+  config-file:
+    default: ''
+    description: >
+      Path of a TOML config file to use (ruff '--config'), for example
+      'build/ruff.toml'. Empty lets Ruff discover 'pyproject.toml',
+      'ruff.toml' or '.ruff.toml' by walking up from each checked file.
+      Cannot be combined with 'isolated'; Ruff rejects that combination
+      itself.
+    type: string
+  config-overrides:
+    default: ''
+    description: >
+      Newline separated list of TOML 'KEY = VALUE' pairs, each passed as its
+      own ruff '--config' argument, for example
+      'lint.dummy-variable-rgx = "^_$"'. These take precedence over every
+      config file, including one named by 'config-file'. One pair per line,
+      because a TOML pair contains whitespace and cannot be split on it.
+      Blank lines are ignored.
+    type: string
+  diff:
+    default: false
+    description: >
+      Print the diff each fix would produce instead of applying it
+      (ruff '--diff'). Implies '--fix-only', so no violation report is
+      printed, and the step fails when any diff exists. Useful for showing
+      what 'fix' would change without modifying the checkout.
+    type: boolean
+  excluded-paths:
+    default: ''
+    description: >
+      Comma separated list of file patterns to omit from the run
+      (ruff '--exclude'). This REPLACES Ruff's default exclusion list, which
+      covers '.git', '__pycache__', '.venv', 'node_modules' and similar, so
+      prefer 'extend-excluded-paths' unless that is intended.
+    type: string
+  exit-non-zero-on-fix:
+    default: false
+    description: >
+      Fail the step when Ruff modified any file, even if no violations
+      remain (ruff '--exit-non-zero-on-fix'). Only meaningful when 'fix' is
+      set to 'safe' or 'unsafe'.
+    type: boolean
+  exit-zero:
+    default: false
+    description: >
+      Exit with 0 even when Ruff reports violations (ruff '--exit-zero').
+      Configuration errors and command line errors still fail the step,
+      because Ruff exits 2 for those. A path that does not exist is reported
+      as a violation and exits 1, so it IS masked by this option.
+    type: boolean
+  extend-excluded-paths:
+    default: ''
+    description: >
+      Comma separated list of extra file patterns to omit on top of Ruff's
+      default exclusion list (ruff '--extend-exclude').
+    type: string
+  extend-per-file-ignores:
+    default: ''
+    description: >
+      Comma separated list of 'pattern:rule' pairs added on top of the
+      per-file ignores already configured (ruff
+      '--extend-per-file-ignores'), for example
+      '__init__.py:F401,tests/*:S101'. Two differences from flake8 are worth
+      knowing: the pairs are separated by commas rather than whitespace, and
+      each pair carries exactly ONE rule code on the command line, so
+      covering several rules under one pattern means repeating the pattern.
+      The list form used in a config file, '"tests/*" = ["F401", "S101"]',
+      is not accepted here.
+    type: string
+  extend-selected-rules:
+    default: ''
+    description: >
+      Comma separated list of rule codes to enable on top of the current
+      selection (ruff '--extend-select'), for example 'E501,D'. Unlike
+      'selected-rules' this keeps the existing selection intact, so it is
+      the usual way to add rules the default set leaves out, such as the
+      line length rule 'E501' or the pydocstyle family 'D'.
+    type: string
+  extensions:
+    default: ''
+    description: >
+      Whitespace separated list of 'extension:language' mappings
+      (ruff '--extension'), for example 'ipy:ipynb'. Each item is passed as
+      a separate argument.
+    type: string
+  extra-args:
+    default: ''
+    description: >
+      Whitespace separated list of extra arguments appended to the
+      'ruff check' invocation, for options this command does not expose, for
+      example '--extend-fixable F401' or '--show-settings'. Each item becomes
+      a separate argument. Shell quoting is not reinterpreted and pathname
+      expansion is not performed, so an argument that needs embedded
+      whitespace should use a dedicated parameter where one is available.
+    type: string
+  fix:
+    default: never
+    description: >
+      Whether Ruff may rewrite the checked files. 'never' passes
+      '--no-fix', which keeps the checkout untouched even when a config file
+      sets 'fix = true'. 'auto' passes nothing, so the config file decides.
+      'safe' passes '--fix --no-unsafe-fixes'. 'unsafe' passes
+      '--fix --unsafe-fixes', which applies fixes that may not preserve the
+      original intent of the code. A fixing run only makes sense when the
+      job commits or diffs the result, so pair it with 'diff' or with
+      'exit-non-zero-on-fix'.
+    enum: ["never", "auto", "safe", "unsafe"]
+    type: enum
+  fix-only:
+    default: false
+    description: >
+      Apply fixes but do not report on, or exit non-zero for, the violations
+      that remain (ruff '--fix-only'). Ruff's '--fix-only' implies '--fix'
+      and wins over '--no-fix'. Because that would rewrite the checkout
+      despite 'fix: never', this command REFUSES the combination rather than
+      silently overriding it; set 'fix' to 'auto', 'safe' or 'unsafe' when a
+      fixing run is intended.
+    type: boolean
+  fixable:
+    default: ''
+    description: >
+      Comma separated list of rule codes that may be fixed
+      (ruff '--fixable'). Only applies when fixing is enabled.
+    type: string
+  force-exclude:
+    default: auto
+    description: >
+      Whether the exclusion patterns also apply to paths passed on the
+      command line (ruff '--force-exclude' / '--no-force-exclude'). 'auto'
+      passes nothing and lets the config file decide. Relevant when
+      'targets' names a file directly, because Ruff otherwise checks an
+      explicitly named file even if it is excluded.
+    enum: ["auto", "enabled", "disabled"]
+    type: enum
+  ignore-noqa:
+    default: false
+    description: >
+      Report violations on lines carrying a '# noqa' comment as well
+      (ruff '--ignore-noqa'). Useful for auditing how many suppressions a
+      project carries.
+    type: boolean
+  ignored-rules:
+    default: ''
+    description: >
+      Comma separated list of rule codes to disable (ruff '--ignore'), for
+      example 'E203,D203'. Applied after the selection, so it removes rules
+      that 'selected-rules' or 'extend-selected-rules' turned on.
+    type: string
+  isolated:
+    default: false
+    description: >
+      Ignore every config file (ruff '--isolated'), so only the parameters of
+      this command decide the outcome. Ruff itself rejects this in
+      combination with a 'config-file' path, but 'config-overrides' and
+      'line-length' are inline settings rather than files, so both still
+      apply under 'isolated'.
+    type: boolean
+  line-length:
+    default: ''
+    description: >
+      Maximum allowed line length, passed as a
+      '--config "line-length = N"' override. Empty keeps Ruff's default of
+      88 or the value from the config file. Note that the line length limit
+      is only REPORTED when rule 'E501' is selected, which Ruff's default
+      rule set does not include; it also affects how other rules and the
+      formatter wrap code.
+    type: string
+  no-cache:
+    default: false
+    description: >
+      Disable cache reads (ruff '--no-cache'). Ruff's cache is keyed on file
+      metadata and settings, so this is mainly useful when debugging a
+      result that looks stale.
+    type: boolean
+  output-file:
+    default: ''
+    description: >
+      Write the report to this path so it can be stored as an artifact
+      (ruff '--output-file'). Ruff creates the parent directories, truncates
+      an existing file and never writes colour into it. Ruff sends nothing to
+      the job log while this is set, so see the 'tee' parameter.
+    type: string
+  output-format:
+    default: default
+    description: >
+      Serialization format for the reported violations
+      (ruff '--output-format'). 'default' passes no flag, so Ruff's own
+      default of 'full' applies. 'github' emits workflow annotations,
+      'junit' and 'sarif' suit report ingestion, and 'concise' gives one
+      line per violation.
+    enum: ["default", "concise", "full", "json", "json-lines", "junit",
+           "grouped", "github", "gitlab", "pylint", "rdjson", "azure",
+           "sarif"]
+    type: enum
+  per-file-ignores:
+    default: ''
+    description: >
+      Comma separated list of 'pattern:rule' pairs applying different
+      ignore lists to different files (ruff '--per-file-ignores'), for
+      example '__init__.py:F401,tests/*:S101'. This REPLACES the per-file
+      ignores from the config file, so prefer 'extend-per-file-ignores'
+      unless that is intended. Each pair carries exactly ONE rule code, so
+      covering several rules under one pattern means repeating the pattern.
+    type: string
+  preview:
+    default: auto
+    description: >
+      Whether unstable rules and fixes are enabled (ruff '--preview' /
+      '--no-preview'). 'auto' passes nothing and lets the config file
+      decide. Preview rules can change or be removed between Ruff releases,
+      so enabling them makes an unpinned Ruff version considerably riskier.
+    enum: ["auto", "enabled", "disabled"]
+    type: enum
+  respect-gitignore:
+    default: auto
+    description: >
+      Whether '.gitignore' and other standard ignore files exclude paths
+      from the run (ruff '--respect-gitignore' / '--no-respect-gitignore').
+      'auto' passes nothing and lets the config file decide. Ruff honours
+      these files by default, which is a difference from flake8 worth
+      knowing when generated code is both ignored by Git and expected to be
+      linted.
+    enum: ["auto", "enabled", "disabled"]
+    type: enum
+  selected-rules:
+    default: ''
+    description: >
+      Comma separated list of rule codes to enable (ruff '--select'), or
+      'ALL' for every rule. This REPLACES the selection rather than adding
+      to it, so prefer 'extend-selected-rules' when the intent is to add
+      rules. Setting 'E4,E7,E9,F' here restores the rule set Ruff enabled
+      by default before 0.16.0, which is the documented way to keep an
+      older configuration working across that upgrade.
+    type: string
+  show-fixes:
+    default: auto
+    description: >
+      Whether an enumeration of the applied fixes is printed
+      (ruff '--show-fixes' / '--no-show-fixes'). 'auto' passes nothing and
+      lets the config file decide. Only meaningful when fixing is enabled.
+    enum: ["auto", "enabled", "disabled"]
+    type: enum
+  statistics:
+    default: false
+    description: >
+      Print a count per rule instead of the individual violations
+      (ruff '--statistics'). This replaces the report rather than appending
+      to it, including in 'output-file'.
+    type: boolean
+  target-version:
+    default: default
+    description: >
+      Minimum Python version the checked code must support
+      (ruff '--target-version'). 'default' passes no flag, so Ruff infers the
+      version from 'requires-python' in 'pyproject.toml' and otherwise falls
+      back to its own default. This drives version dependent rules such as
+      the pyupgrade ('UP') family.
+    enum: ["default", "py37", "py38", "py39", "py310", "py311", "py312",
+           "py313", "py314", "py315"]
+    type: enum
+  targets:
+    default: '.'
+    description: >
+      Whitespace separated list of source files or directories to check.
+    type: string
+  tee:
+    default: true
+    description: >
+      When 'output-file' is set, also print the report to the CircleCI log.
+      Ruff has no '--tee' of its own and writes to the file INSTEAD of
+      standard output, so this command prints the file back to the log
+      afterwards. The log copy carries no colour, because Ruff does not
+      write colour into the file.
+    type: boolean
+  unfixable:
+    default: ''
+    description: >
+      Comma separated list of rule codes that must never be fixed
+      (ruff '--unfixable'). Only applies when fixing is enabled.
+    type: string
+  verbosity:
+    default: default
+    description: >
+      Log verbosity. 'verbose' passes '--verbose' and reports what Ruff is
+      doing, including which config file was resolved. 'quiet' passes
+      '--quiet' and prints the violations only. 'silent' passes '--silent'
+      and prints nothing while still exiting non-zero on violations.
+    enum: ["default", "verbose", "quiet", "silent"]
+    type: enum
+steps:
+  - run:
+      name: Show Ruff version
+      command: <<include(scripts/show-version.sh)>>
+  - run:
+      name: Execute ruff check
+      environment:
+        PARAM_CACHE_DIR: '<<parameters.cache-dir>>'
+        PARAM_COLOR: '<<parameters.color>>'
+        PARAM_CONFIG_FILE: '<<parameters.config-file>>'
+        PARAM_CONFIG_OVERRIDES: '<<parameters.config-overrides>>'
+        PARAM_DIFF: '<<parameters.diff>>'
+        PARAM_EXCLUDED_PATHS: '<<parameters.excluded-paths>>'
+        PARAM_EXIT_NON_ZERO_ON_FIX: '<<parameters.exit-non-zero-on-fix>>'
+        PARAM_EXIT_ZERO: '<<parameters.exit-zero>>'
+        PARAM_EXTEND_EXCLUDED_PATHS: '<<parameters.extend-excluded-paths>>'
+        PARAM_EXTEND_PER_FILE_IGNORES: '<<parameters.extend-per-file-ignores>>'
+        PARAM_EXTEND_SELECTED_RULES: '<<parameters.extend-selected-rules>>'
+        PARAM_EXTENSIONS: '<<parameters.extensions>>'
+        PARAM_EXTRA_ARGS: '<<parameters.extra-args>>'
+        PARAM_FIX: '<<parameters.fix>>'
+        PARAM_FIXABLE: '<<parameters.fixable>>'
+        PARAM_FIX_ONLY: '<<parameters.fix-only>>'
+        PARAM_FORCE_EXCLUDE: '<<parameters.force-exclude>>'
+        PARAM_IGNORED_RULES: '<<parameters.ignored-rules>>'
+        PARAM_IGNORE_NOQA: '<<parameters.ignore-noqa>>'
+        PARAM_ISOLATED: '<<parameters.isolated>>'
+        PARAM_LINE_LENGTH: '<<parameters.line-length>>'
+        PARAM_NO_CACHE: '<<parameters.no-cache>>'
+        PARAM_OUTPUT_FILE: '<<parameters.output-file>>'
+        PARAM_OUTPUT_FORMAT: '<<parameters.output-format>>'
+        PARAM_PER_FILE_IGNORES: '<<parameters.per-file-ignores>>'
+        PARAM_PREVIEW: '<<parameters.preview>>'
+        PARAM_RESPECT_GITIGNORE: '<<parameters.respect-gitignore>>'
+        PARAM_SELECTED_RULES: '<<parameters.selected-rules>>'
+        PARAM_SHOW_FIXES: '<<parameters.show-fixes>>'
+        PARAM_STATISTICS: '<<parameters.statistics>>'
+        PARAM_TARGETS: '<<parameters.targets>>'
+        PARAM_TARGET_VERSION: '<<parameters.target-version>>'
+        PARAM_TEE: '<<parameters.tee>>'
+        PARAM_UNFIXABLE: '<<parameters.unfixable>>'
+        PARAM_VERBOSITY: '<<parameters.verbosity>>'
+      command: <<include(scripts/check.sh)>>

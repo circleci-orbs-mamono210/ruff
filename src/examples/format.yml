@@ -1,0 +1,29 @@
+---
+description: >
+  Gate the pipeline on both the linter and the formatter. The formatter runs
+  in 'diff' mode so a failure shows the exact changes it wants, and the
+  Markdown files are excluded because Ruff 0.16.0 started formatting Python
+  code blocks inside them.
+usage:
+  version: 2.1
+  orbs:
+    ruff: orbss/ruff@x.y.z
+  jobs:
+    execute-ruff:
+      executor: ruff/default
+      steps:
+        - checkout
+        - ruff/install:
+            version: 0.16.2
+        - ruff/check:
+            color: always
+            targets: src tests
+        - ruff/format:
+            color: always
+            extend-excluded-paths: "*.md"
+            mode: diff
+            targets: src tests
+  workflows:
+    use-my-orb:
+      jobs:
+        - execute-ruff

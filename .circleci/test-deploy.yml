@@ -1,0 +1,858 @@
+version: 2.1
+
+orbs:
+  ruff: orbss/ruff@dev:<<pipeline.git.revision>>
+  orb-tools: circleci/orb-tools@11.1
+
+filters: &filters
+  tags:
+    only: /.*/
+
+commands:
+  verify-fixtures:
+    description: >
+      Fail early when the committed fixtures are missing. Ruff exits 0 when it
+      finds no Python files, so an empty checkout would make every test pass
+      for the wrong reason.
+    steps:
+      - run:
+          name: Verify test fixtures
+          command: |
+            set -euo pipefail
+
+            test -s tests/clean/compliant.py
+            test -s tests/violations/undefined_name.py
+            test -s tests/violations/unsorted_imports.py
+            test -s tests/violations/unused_import.py
+            test -s tests/unformatted/spacing.py
+
+            echo 'Fixtures found:'
+            find tests -type f -name '*.py' -print
+
+  write-check-defaults:
+    description: >
+      Write the full set of PARAM_* defaults used by the tests that invoke
+      'src/scripts/check.sh' directly. Those tests assert on behaviour the orb
+      command cannot express, such as a step that must fail, so they need
+      every parameter the command would otherwise supply.
+    steps:
+      - run:
+          name: Write check.sh parameter defaults
+          command: |
+            set -euo pipefail
+
+            : > /tmp/check-defaults.sh
+
+            for name in \
+              CACHE_DIR CONFIG_FILE CONFIG_OVERRIDES EXCLUDED_PATHS \
+              EXTEND_EXCLUDED_PATHS EXTEND_PER_FILE_IGNORES \
+              EXTEND_SELECTED_RULES EXTENSIONS EXTRA_ARGS FIXABLE \
+              IGNORED_RULES LINE_LENGTH OUTPUT_FILE PER_FILE_IGNORES \
+              SELECTED_RULES UNFIXABLE; do
+              echo "export PARAM_${name}=''" >> /tmp/check-defaults.sh
+            done
+
+            for name in \
+              DIFF EXIT_NON_ZERO_ON_FIX EXIT_ZERO FIX_ONLY IGNORE_NOQA \
+              ISOLATED NO_CACHE STATISTICS; do
+              echo "export PARAM_${name}='false'" >> /tmp/check-defaults.sh
+            done
+
+            for name in FORCE_EXCLUDE PREVIEW RESPECT_GITIGNORE SHOW_FIXES; do
+              echo "export PARAM_${name}='auto'" >> /tmp/check-defaults.sh
+            done
+
+            {
+              echo "export PARAM_COLOR='auto'"
+              echo "export PARAM_FIX='never'"
+              echo "export PARAM_OUTPUT_FORMAT='default'"
+              echo "export PARAM_TARGETS='.'"
+              echo "export PARAM_TARGET_VERSION='default'"
+              echo "export PARAM_TEE='true'"
+              echo "export PARAM_VERBOSITY='default'"
+            } >> /tmp/check-defaults.sh
+
+            echo 'Defaults written:'
+            cat /tmp/check-defaults.sh
+
+jobs:
+  command-tests:
+    executor: ruff/default
+    steps:
+      - checkout
+      - verify-fixtures
+
+      - ruff/install:
+          version: "0.16.2"
+
+      # The clean fixture has no violations under the default rule set, so
+      # the default parameters must pass.
+      - ruff/check:
+          targets: tests/clean
+
+      # The same fixture is formatted, so the formatter gate must pass too.
+      - ruff/format:
+          targets: tests/clean
+
+  parameter-tests:
+    executor: ruff/default
+    steps:
+      - checkout
+      - verify-fixtures
+      - write-check-defaults
+
+      - ruff/install:
+          version: "0.16.2"
+
+      # E501 is not in the default rule set, so the clean fixture only stops
+      # being clean once both the rule and a short line length are supplied.
+      # E501 in the report is what proves line-length reached Ruff.
+      - ruff/check:
+          exit-zero: true
+          extend-selected-rules: E501
+          line-length: "40"
+          output-file: reports/line-length.txt
+          targets: tests/clean/compliant.py
+
+      - run:
+          name: Verify line-length changed the outcome
+          command: |
+            set -euo pipefail
+
+            test -s reports/line-length.txt
+
+            echo 'Report contents:'
+            cat reports/line-length.txt
+
+            grep -q 'E501' reports/line-length.txt
+
+            if grep -q "$(printf '\033')" reports/line-length.txt; then
+              echo 'Report contains ANSI escape sequences'
+              exit 1
+            fi
+
+      # Ruff truncates the output file rather than appending to it. Re-running
+      # the same step must therefore leave the same number of findings.
+      - ruff/check:
+          exit-zero: true
+          extend-selected-rules: E501
+          line-length: "40"
+          output-file: reports/line-length.txt
+          targets: tests/clean/compliant.py
+
+      - run:
+          name: Verify the report is replaced between runs
+          command: |
+            set -euo pipefail
+
+            echo 'Report contents:'
+            cat reports/line-length.txt
+
+            occurrences="$(grep -c 'E501' reports/line-length.txt)"
+
+            if [ "${occurrences}" -ne 4 ]; then
+              echo "Expected 4 E501 lines, got ${occurrences}"
+              exit 1
+            fi
+
+      # unused_import.py violates F401 only, so this passes if and only if
+      # ignored-rules is honoured.
+      - ruff/check:
+          ignored-rules: F401
+          targets: tests/violations/unused_import.py
+
+      # unsorted_imports.py violates I001 only, and unused_import.py violates
+      # F401 only. Selecting F must therefore report the second and drop the
+      # first.
+      - ruff/check:
+          exit-zero: true
+          output-file: reports/select.txt
+          selected-rules: F
+          targets: tests/violations
+
+      - run:
+          name: Verify selected-rules limited the report
+          command: |
+            set -euo pipefail
+
+            echo 'Report contents:'
+            cat reports/select.txt
+
+            grep -q 'F401' reports/select.txt
+
+            if grep -q 'I001' reports/select.txt; then
+              echo 'selected-rules did not limit the reported rules'
+              exit 1
+            fi
+
+      # Restoring the pre-0.16.0 default set must drop I001 as well, because
+      # the isort rules are not part of it.
+      - ruff/check:
+          exit-zero: true
+          output-file: reports/legacy-defaults.txt
+          selected-rules: E4,E7,E9,F
+          targets: tests/violations
+
+      - run:
+          name: Verify the legacy default set excludes isort
+          command: |
+            set -euo pipefail
+
+            echo 'Report contents:'
+            cat reports/legacy-defaults.txt
+
+            grep -q 'F401' reports/legacy-defaults.txt
+            grep -q 'F821' reports/legacy-defaults.txt
+
+            if grep -q 'I001' reports/legacy-defaults.txt; then
+              echo 'The legacy default set unexpectedly reported I001'
+              exit 1
+            fi
+
+      # Directory scanning plus exclusion. Only tests/clean and
+      # tests/unformatted survive, and neither reports a violation, so this
+      # passes only when extend-excluded-paths is applied.
+      - ruff/check:
+          extend-excluded-paths: tests/violations
+          targets: tests
+
+      # Ruff separates the per-file-ignores pairs with commas, unlike flake8.
+      - ruff/check:
+          per-file-ignores: "tests/violations/unused_import.py:F401,tests/violations/unsorted_imports.py:I001,tests/violations/undefined_name.py:F821"
+          targets: tests/violations
+
+      # Each entry is a single 'pattern:rule' pair, so covering three rules
+      # under one pattern means repeating the pattern three times.
+      - ruff/check:
+          extend-per-file-ignores: "tests/violations/*:F401,tests/violations/*:I001,tests/violations/*:F821"
+          targets: tests/violations
+
+      # Smoke test for argument construction: whitespace separated targets
+      # together with several independent flags.
+      - ruff/check:
+          color: always
+          no-cache: true
+          statistics: true
+          target-version: py311
+          targets: tests/clean tests/clean/compliant.py
+          verbosity: verbose
+
+      # Verify that multiple extra arguments are split and passed to Ruff.
+      # Neither option changes the reported violations, so the step only fails
+      # if the splitting itself is broken.
+      - ruff/check:
+          extra-args: --extend-fixable F401 --no-show-fixes
+          targets: tests/clean
+
+      - store_artifacts:
+          path: reports
+
+      # config-overrides carries whitespace inside each value, so this proves
+      # the parameter is split on newlines rather than on whitespace.
+      - ruff/check:
+          config-overrides: |
+            lint.extend-select = ["E501"]
+            line-length = 40
+          exit-zero: true
+          output-file: reports/config-overrides.txt
+          targets: tests/clean/compliant.py
+
+      - run:
+          name: Verify config-overrides reached Ruff
+          command: |
+            set -euo pipefail
+
+            echo 'Report contents:'
+            cat reports/config-overrides.txt
+
+            grep -q 'E501' reports/config-overrides.txt
+
+      # 'tee' is what puts the report in the job log. With it disabled the
+      # report must reach the file only.
+      - run:
+          name: Verify tee controls the log output
+          command: |
+            set -euo pipefail
+
+            source /tmp/check-defaults.sh
+
+            set +e
+            output="$(
+              PARAM_EXIT_ZERO='true' \
+              PARAM_OUTPUT_FILE='reports/no-tee.txt' \
+              PARAM_TARGETS='tests/violations/unused_import.py' \
+              PARAM_TEE='false' \
+                bash src/scripts/check.sh
+            )"
+            status=$?
+            set -e
+
+            printf '%s\n' "${output}"
+
+            if [ "${status}" -ne 0 ]; then
+              echo "Expected exit-zero to succeed, got ${status}"
+              exit 1
+            fi
+
+            if printf '%s\n' "${output}" | grep -q 'F401'; then
+              echo 'Report reached the log even though tee was disabled'
+              exit 1
+            fi
+
+            grep -q 'F401' reports/no-tee.txt
+
+            echo 'tee correctly controlled the log output.'
+
+      - run:
+          name: Verify tee prints the report back to the log
+          command: |
+            set -euo pipefail
+
+            source /tmp/check-defaults.sh
+
+            set +e
+            output="$(
+              PARAM_EXIT_ZERO='true' \
+              PARAM_OUTPUT_FILE='reports/tee.txt' \
+              PARAM_TARGETS='tests/violations/unused_import.py' \
+                bash src/scripts/check.sh
+            )"
+            status=$?
+            set -e
+
+            printf '%s\n' "${output}"
+
+            if [ "${status}" -ne 0 ]; then
+              echo "Expected exit-zero to succeed, got ${status}"
+              exit 1
+            fi
+
+            if ! printf '%s\n' "${output}" | grep -q 'F401'; then
+              echo 'Report did not reach the log even though tee was enabled'
+              exit 1
+            fi
+
+      # 'fix: never' must keep the checkout untouched. F401 and I001 are both
+      # fixable, so an accidental rewrite would be visible in the fixtures.
+      - run:
+          name: Verify fix never rewrites the checkout
+          command: |
+            set -euo pipefail
+
+            before="$(cat tests/violations/unused_import.py tests/violations/unsorted_imports.py)"
+
+            source /tmp/check-defaults.sh
+
+            set +e
+            PARAM_EXIT_ZERO='true' \
+            PARAM_TARGETS='tests/violations' \
+              bash src/scripts/check.sh > /dev/null
+            set -e
+
+            after="$(cat tests/violations/unused_import.py tests/violations/unsorted_imports.py)"
+
+            if [ "${before}" != "${after}" ]; then
+              echo 'The fixtures were modified despite fix: never'
+              exit 1
+            fi
+
+            echo 'The checkout was left untouched.'
+
+      # The complement of the test above: 'fix: safe' must actually rewrite
+      # the checkout, which is what proves 'fix: never' is suppressing
+      # something rather than passing a flag with no effect. I001 is fixable,
+      # so the fixture is repaired and then restored.
+      - run:
+          name: Verify fix safe rewrites and exit-non-zero-on-fix reports it
+          command: |
+            set -euo pipefail
+
+            cp tests/violations/unsorted_imports.py /tmp/unsorted_imports.orig
+
+            source /tmp/check-defaults.sh
+
+            set +e
+            PARAM_EXIT_NON_ZERO_ON_FIX='true' \
+            PARAM_FIX='safe' \
+            PARAM_TARGETS='tests/violations/unsorted_imports.py' \
+              bash src/scripts/check.sh
+            status=$?
+            set -e
+
+            if diff -q /tmp/unsorted_imports.orig tests/violations/unsorted_imports.py; then
+              echo 'fix: safe did not rewrite the fixture'
+              cp /tmp/unsorted_imports.orig tests/violations/unsorted_imports.py
+              exit 1
+            fi
+
+            # I001 is the fixture's only violation and it is fixable, so
+            # nothing remains to report and the status comes solely from
+            # exit-non-zero-on-fix. Ruff uses 1 for that and 2 for an error.
+            if [ "${status}" -ne 1 ]; then
+              echo "Expected exit status 1, got ${status}"
+              cp /tmp/unsorted_imports.orig tests/violations/unsorted_imports.py
+              exit 1
+            fi
+
+            cp /tmp/unsorted_imports.orig tests/violations/unsorted_imports.py
+
+            echo 'fix: safe correctly rewrote the fixture.'
+
+      # '--fix-only' implies '--fix' and wins over '--no-fix', so the command
+      # refuses the combination rather than rewriting files silently.
+      - run:
+          name: Verify fix-only cannot be combined with fix never
+          command: |
+            set -euo pipefail
+
+            source /tmp/check-defaults.sh
+
+            set +e
+            PARAM_FIX_ONLY='true' \
+            PARAM_TARGETS='tests/clean' \
+              bash src/scripts/check.sh
+            status=$?
+            set -e
+
+            # The guard is the command's own, and it exits 1.
+            if [ "${status}" -ne 1 ]; then
+              echo "Expected exit status 1, got ${status}"
+              exit 1
+            fi
+
+            echo 'The fix-only/fix combination correctly failed.'
+
+      # The command documents that Ruff rejects 'isolated' together with a
+      # 'config-file' path. Assert that, so the documentation cannot go stale
+      # without a test noticing.
+      - run:
+          name: Verify isolated and config-file cannot be combined
+          command: |
+            set -euo pipefail
+
+            source /tmp/check-defaults.sh
+
+            printf 'line-length = 40\n' > /tmp/probe-config.toml
+
+            set +e
+            PARAM_CONFIG_FILE='/tmp/probe-config.toml' \
+            PARAM_ISOLATED='true' \
+            PARAM_TARGETS='tests/clean' \
+              bash src/scripts/check.sh
+            status=$?
+            set -e
+
+            # Ruff exits 2 for a configuration error, so an exact check
+            # distinguishes the refusal from a violation report.
+            if [ "${status}" -ne 2 ]; then
+              echo "Expected exit status 2, got ${status}"
+              exit 1
+            fi
+
+            # The config file exists, so a failure here can only come from the
+            # combination itself rather than from a missing path.
+            test -s /tmp/probe-config.toml
+
+            echo 'The isolated/config-file combination correctly failed.'
+
+      # Ruff draws its isolated/config line at FILES, not at settings, so an
+      # inline override must still apply under isolated. F401 is the
+      # fixture's only violation, so ignoring it via an override is what
+      # makes the step pass.
+      - run:
+          name: Verify isolated accepts config overrides
+          command: |
+            set -euo pipefail
+
+            source /tmp/check-defaults.sh
+
+            PARAM_CONFIG_OVERRIDES='lint.ignore = ["F401"]' \
+            PARAM_ISOLATED='true' \
+            PARAM_TARGETS='tests/violations/unused_import.py' \
+              bash src/scripts/check.sh
+
+            echo 'Config overrides were applied under isolated.'
+
+      # 'line-length' is passed as an inline override too, so it must survive
+      # isolated as well. E501 in the report is what proves it arrived.
+      - ruff/check:
+          exit-zero: true
+          extend-selected-rules: E501
+          isolated: true
+          line-length: "40"
+          output-file: reports/isolated-line-length.txt
+          targets: tests/clean/compliant.py
+
+      - run:
+          name: Verify line-length survives isolated
+          command: |
+            set -euo pipefail
+
+            echo 'Report contents:'
+            cat reports/isolated-line-length.txt
+
+            grep -q 'E501' reports/isolated-line-length.txt
+
+      # Ruff exits 2 for a missing config file and for a command line error,
+      # and exit-zero applies to reported violations only.
+      - run:
+          name: Verify exit-zero does not mask configuration errors
+          command: |
+            set -euo pipefail
+
+            source /tmp/check-defaults.sh
+
+            set +e
+            PARAM_CONFIG_FILE='no-such-config.toml' \
+            PARAM_EXIT_ZERO='true' \
+            PARAM_TARGETS='tests/clean' \
+              bash src/scripts/check.sh
+            config_status=$?
+            set -e
+
+            # The README documents 2 as the configuration-error status, so
+            # assert it exactly rather than merely asserting a failure.
+            if [ "${config_status}" -ne 2 ]; then
+              echo "Expected exit status 2, got ${config_status}"
+              exit 1
+            fi
+
+            echo 'The configuration error correctly remained a failure.'
+
+      # Verify that targets and extra-args are split into arrays without Bash
+      # pathname expansion. Both values below match files or directories in
+      # the checkout if normal glob expansion is accidentally performed.
+      - run:
+          name: Verify argument splitting does not expand globs
+          command: |
+            set -euo pipefail
+
+            source /tmp/check-defaults.sh
+
+            set +e
+            output="$(
+              PARAM_EXIT_ZERO='true' \
+              PARAM_EXTRA_ARGS='--extend-exclude *.pyi' \
+              PARAM_TARGETS='tests/*' \
+                bash src/scripts/check.sh 2>&1
+            )"
+            status=$?
+            set -e
+
+            printf '%s\n' "${output}"
+            echo "ruff exit status: ${status}"
+
+            command_line="$(
+              printf '%s\n' "${output}" |
+                grep '^Command:' |
+                head -n 1
+            )"
+
+            if [ -z "${command_line}" ]; then
+              echo 'Command line was not printed'
+              exit 1
+            fi
+
+            # printf %q escapes the literal '*' as '\*'. If Bash expanded the
+            # globs before invoking Ruff, these strings would not exist.
+            if ! printf '%s\n' "${command_line}" |
+              grep -Fq -- '--extend-exclude \*.pyi'; then
+              echo 'extra-args glob was expanded unexpectedly'
+              exit 1
+            fi
+
+            if ! printf '%s\n' "${command_line}" |
+              grep -Fq -- 'tests/\*'; then
+              echo 'targets glob was expanded unexpectedly'
+              exit 1
+            fi
+
+            echo 'Globs were preserved as literal Ruff arguments.'
+
+  format-tests:
+    executor: ruff/default
+    steps:
+      - checkout
+      - verify-fixtures
+
+      - ruff/install:
+          version: "0.16.2"
+
+      # The clean fixture is already formatted, so the default check mode
+      # must pass on it.
+      - ruff/format:
+          targets: tests/clean
+
+      # The unformatted fixture passes 'ruff check' under the default rule
+      # set but must fail the formatter gate. Running the command through the
+      # step would fail the job, so the script is invoked directly.
+      - run:
+          name: Verify check mode fails on an unformatted file
+          command: |
+            set -euo pipefail
+
+            before="$(cat tests/unformatted/spacing.py)"
+
+            set +e
+            PARAM_CACHE_DIR='' \
+            PARAM_COLOR='auto' \
+            PARAM_CONFIG_FILE='' \
+            PARAM_CONFIG_OVERRIDES='' \
+            PARAM_EXCLUDED_PATHS='' \
+            PARAM_EXIT_NON_ZERO_ON_FORMAT='false' \
+            PARAM_EXTEND_EXCLUDED_PATHS='' \
+            PARAM_EXTENSIONS='' \
+            PARAM_EXTRA_ARGS='' \
+            PARAM_FORCE_EXCLUDE='auto' \
+            PARAM_ISOLATED='false' \
+            PARAM_LINE_LENGTH='' \
+            PARAM_MODE='check' \
+            PARAM_NO_CACHE='false' \
+            PARAM_OUTPUT_FORMAT='default' \
+            PARAM_PREVIEW='auto' \
+            PARAM_RESPECT_GITIGNORE='auto' \
+            PARAM_TARGETS='tests/unformatted' \
+            PARAM_TARGET_VERSION='default' \
+            PARAM_VERBOSITY='default' \
+              bash src/scripts/format.sh
+            status=$?
+            set -e
+
+            if [ "${status}" -eq 0 ]; then
+              echo 'check mode passed on an unformatted file'
+              exit 1
+            fi
+
+            after="$(cat tests/unformatted/spacing.py)"
+
+            if [ "${before}" != "${after}" ]; then
+              echo 'check mode modified the file'
+              exit 1
+            fi
+
+            echo 'check mode correctly failed without modifying the file.'
+
+      # 'write' mode is the only mode that rewrites files, and the rewritten
+      # file must then satisfy the check mode.
+      - run:
+          name: Verify write mode reformats the file
+          command: |
+            set -euo pipefail
+
+            cp tests/unformatted/spacing.py /tmp/spacing.py.orig
+
+      - ruff/format:
+          mode: write
+          targets: tests/unformatted
+
+      - ruff/format:
+          targets: tests/unformatted
+
+      - run:
+          name: Restore the unformatted fixture
+          command: |
+            set -euo pipefail
+
+            if diff -q /tmp/spacing.py.orig tests/unformatted/spacing.py; then
+              echo 'write mode left the file unchanged'
+              exit 1
+            fi
+
+            cp /tmp/spacing.py.orig tests/unformatted/spacing.py
+
+            echo 'write mode correctly reformatted the file.'
+
+      # 'diff' mode must fail like 'check' mode and additionally print the
+      # changes, while still leaving the file alone.
+      - run:
+          name: Verify diff mode fails without modifying the file
+          command: |
+            set -euo pipefail
+
+            before="$(cat tests/unformatted/spacing.py)"
+
+            set +e
+            output="$(
+              PARAM_CACHE_DIR='' \
+              PARAM_COLOR='auto' \
+              PARAM_CONFIG_FILE='' \
+              PARAM_CONFIG_OVERRIDES='' \
+              PARAM_EXCLUDED_PATHS='' \
+              PARAM_EXIT_NON_ZERO_ON_FORMAT='false' \
+              PARAM_EXTEND_EXCLUDED_PATHS='' \
+              PARAM_EXTENSIONS='' \
+              PARAM_EXTRA_ARGS='' \
+              PARAM_FORCE_EXCLUDE='auto' \
+              PARAM_ISOLATED='false' \
+              PARAM_LINE_LENGTH='' \
+              PARAM_MODE='diff' \
+              PARAM_NO_CACHE='false' \
+              PARAM_OUTPUT_FORMAT='default' \
+              PARAM_PREVIEW='auto' \
+              PARAM_RESPECT_GITIGNORE='auto' \
+              PARAM_TARGETS='tests/unformatted' \
+              PARAM_TARGET_VERSION='default' \
+              PARAM_VERBOSITY='default' \
+                bash src/scripts/format.sh 2>&1
+            )"
+            status=$?
+            set -e
+
+            printf '%s\n' "${output}"
+
+            if [ "${status}" -eq 0 ]; then
+              echo 'diff mode passed on an unformatted file'
+              exit 1
+            fi
+
+            if [ "${before}" != "$(cat tests/unformatted/spacing.py)" ]; then
+              echo 'diff mode modified the file'
+              exit 1
+            fi
+
+            # 'check' mode reports only which files would change; 'diff' mode
+            # is distinguished by printing the change itself.
+            if ! printf '%s\n' "${output}" | grep -q 'VALUES'; then
+              echo 'diff mode did not print the change'
+              exit 1
+            fi
+
+            echo 'diff mode correctly failed and printed the change.'
+
+      # 'exit-non-zero-on-format' turns a successful rewrite into a failure,
+      # which is how a 'write' mode job reports that it changed something.
+      - run:
+          name: Verify exit-non-zero-on-format reports a rewrite
+          command: |
+            set -euo pipefail
+
+            cp tests/unformatted/spacing.py /tmp/spacing.py.enzof
+
+            set +e
+            PARAM_CACHE_DIR='' \
+            PARAM_COLOR='auto' \
+            PARAM_CONFIG_FILE='' \
+            PARAM_CONFIG_OVERRIDES='' \
+            PARAM_EXCLUDED_PATHS='' \
+            PARAM_EXIT_NON_ZERO_ON_FORMAT='true' \
+            PARAM_EXTEND_EXCLUDED_PATHS='' \
+            PARAM_EXTENSIONS='' \
+            PARAM_EXTRA_ARGS='' \
+            PARAM_FORCE_EXCLUDE='auto' \
+            PARAM_ISOLATED='false' \
+            PARAM_LINE_LENGTH='' \
+            PARAM_MODE='write' \
+            PARAM_NO_CACHE='false' \
+            PARAM_OUTPUT_FORMAT='default' \
+            PARAM_PREVIEW='auto' \
+            PARAM_RESPECT_GITIGNORE='auto' \
+            PARAM_TARGETS='tests/unformatted' \
+            PARAM_TARGET_VERSION='default' \
+            PARAM_VERBOSITY='default' \
+              bash src/scripts/format.sh
+            status=$?
+            set -e
+
+            cp /tmp/spacing.py.enzof tests/unformatted/spacing.py
+
+            if [ "${status}" -ne 1 ]; then
+              echo "Expected exit status 1, got ${status}"
+              exit 1
+            fi
+
+            echo 'exit-non-zero-on-format correctly reported the rewrite.'
+
+      # line-length is a first class formatter flag, so a short value must
+      # make the otherwise formatted fixture fail the gate.
+      - run:
+          name: Verify line-length reaches the formatter
+          command: |
+            set -euo pipefail
+
+            set +e
+            output="$(
+              ruff format --check --line-length 20 tests/clean 2>&1
+            )"
+            status=$?
+            set -e
+
+            printf '%s\n' "${output}"
+
+            if [ "${status}" -eq 0 ]; then
+              echo 'A line length of 20 unexpectedly left the fixture formatted'
+              exit 1
+            fi
+
+  install-tests:
+    docker:
+      - image: cimg/python:3.13
+    steps:
+      - checkout
+      - verify-fixtures
+
+      - ruff/install:
+          version: "0.16.2"
+
+      - run:
+          name: Verify the pinned version was installed
+          command: |
+            set -euo pipefail
+
+            ruff --version
+            ruff --version | grep -Fq "0.16.2"
+
+      - ruff/check:
+          targets: tests/clean
+
+  resource-class-test:
+    executor:
+      name: ruff/default
+      resource_class: medium
+    steps:
+      - checkout
+      - verify-fixtures
+
+      - ruff/install:
+          version: "0.16.2"
+
+      - ruff/check:
+          targets: tests/clean
+
+workflows:
+  test-deploy:
+    jobs:
+      - command-tests:
+          filters: *filters
+
+      - parameter-tests:
+          filters: *filters
+
+      - format-tests:
+          filters: *filters
+
+      - install-tests:
+          filters: *filters
+
+      - resource-class-test:
+          filters: *filters
+
+      - orb-tools/pack:
+          filters: *filters
+
+      - orb-tools/publish:
+          orb-name: orbss/ruff
+          vcs-type: << pipeline.project.type >>
+          pub-type: production
+          requires:
+            - orb-tools/pack
+            - command-tests
+            - format-tests
+            - install-tests
+            - parameter-tests
+            - resource-class-test
+          context: CIRCLECI_ORBS
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
