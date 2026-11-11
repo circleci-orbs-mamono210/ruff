@@ -256,9 +256,6 @@ jobs:
           name: Verify the report reflects only the latest run
           command: bash tests/report/regression.sh
 
-      - store_artifacts:
-          path: reports
-
       # config-overrides carries whitespace inside each value, so this proves
       # the parameter is split on newlines rather than on whitespace.
       - ruff/check:
@@ -580,6 +577,121 @@ jobs:
             fi
 
             echo 'Globs were preserved as literal Ruff arguments.'
+
+      # store_artifacts below stores every report this job writes, so it has
+      # to stay the last step. This step checks the reports first. The files
+      # must match the list below one to one, and tests/README.md documents
+      # the same list. The reports listed as empty must be empty and all
+      # others must have content. No report may carry the stale-report marker
+      # of tests/report/regression.sh. The manifest printed at the end ties
+      # the stored files to this commit and job. store_artifacts runs even
+      # after a failed step, so it can also store reports that failed this
+      # check or never reached it. Treat the stored reports as verified only
+      # when this step and the whole job have both succeeded. CircleCI may
+      # skip empty files when uploading; see tests/README.md for how to
+      # compare the artifacts with this list.
+      - run:
+          name: Verify the reports to be stored
+          command: |
+            set -euo pipefail
+
+            non_empty=(
+              reports/config-overrides.txt
+              reports/isolated-line-length.txt
+              reports/legacy-defaults.txt
+              reports/line-length.txt
+              reports/no-tee.txt
+              reports/report-regression/exit-zero-violations.txt
+              reports/report-regression/rerun-clean.txt
+              reports/report-regression/rerun.txt
+              reports/report-regression/success-no-tee.txt
+              reports/report-regression/success-tee.txt
+              reports/report-regression/violations-no-tee.txt
+              reports/report-regression/violations-tee.txt
+              reports/select.txt
+              reports/tee.txt
+            )
+
+            # check.sh empties output-file before Ruff runs. These runs stop
+            # on a configuration error, or run under 'quiet' or 'silent', so
+            # Ruff writes nothing and the report is empty by design.
+            empty=(
+              reports/report-regression/config-error-no-tee.txt
+              reports/report-regression/config-error-tee.txt
+              reports/report-regression/exit-zero-config-error.txt
+              reports/report-regression/rerun-config-error.txt
+              reports/report-regression/rerun-empty-failure.txt
+              reports/report-regression/rerun-empty-success.txt
+            )
+
+            failures=0
+
+            printf '%s\n' "${non_empty[@]}" "${empty[@]}" |
+              LC_ALL=C sort > /tmp/expected-reports.txt
+            find reports -type f | LC_ALL=C sort > /tmp/actual-reports.txt
+
+            if ! diff -u /tmp/expected-reports.txt /tmp/actual-reports.txt; then
+              echo 'The reports differ from the expected list'
+              failures=1
+            fi
+
+            for report in "${non_empty[@]}"; do
+              if [ ! -s "${report}" ]; then
+                echo "Expected a report with content: ${report}"
+                failures=1
+              fi
+            done
+
+            for report in "${empty[@]}"; do
+              if [ ! -f "${report}" ] || [ -s "${report}" ]; then
+                echo "Expected an empty report: ${report}"
+                failures=1
+              fi
+            done
+
+            # Read the marker from the script that seeds it, so the two
+            # cannot drift apart unnoticed.
+            if ! marker="$(
+              grep -m 1 '^STALE_MARKER=' tests/report/regression.sh |
+                cut -d "'" -f 2
+            )" || [ -z "${marker}" ]; then
+              echo 'STALE_MARKER was not found in tests/report/regression.sh'
+              exit 1
+            fi
+
+            set +e
+            grep -rlF -- "${marker}" reports
+            marker_status=$?
+            set -e
+
+            case "${marker_status}" in
+              0)
+                echo "The reports above carry the stale-report marker ${marker}"
+                failures=1
+                ;;
+              1)
+                ;;
+              *)
+                echo 'The reports could not be searched for the marker'
+                failures=1
+                ;;
+            esac
+
+            echo "Commit: ${CIRCLE_SHA1:-unknown}"
+            echo "Job: ${CIRCLE_BUILD_URL:-unknown}"
+            echo 'Reports to be stored (bytes, SHA-256, path):'
+
+            while IFS= read -r report; do
+              printf '%s %s %s\n' \
+                "$(wc -c < "${report}")" \
+                "$(sha256sum "${report}" | cut -d ' ' -f 1)" \
+                "${report}"
+            done < /tmp/actual-reports.txt
+
+            exit "${failures}"
+
+      - store_artifacts:
+          path: reports
 
   format-tests:
     executor: ruff/default
