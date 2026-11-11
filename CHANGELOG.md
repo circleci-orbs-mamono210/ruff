@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * `ruff/check` no longer shows or keeps an earlier run's report when `output-file` is set. Ruff leaves the file untouched when it stops on a configuration or command-line error (exit 2), so the old report used to be printed as `Report written to …` and stored as if it were the new result. The Orb now creates the parent directory and empties the file before Ruff runs, and `tee` prints the report only when this run wrote something to it. An empty report is announced as `Report <path> is empty.` instead.
 * The `parameter-tests` integration job now stores every report it writes as a build artifact. `store_artifacts` used to run before four of the reports were written, so `config-overrides.txt`, `no-tee.txt`, `tee.txt` and `isolated-line-length.txt` were never stored. It is now the last step, preceded by a check that the reports match the documented list, that the expected ones are empty and the rest are not, and that none carries the stale-report marker.
+* The format `line-length` integration test now runs through the Orb, both `format.sh` and the `ruff/format` command, instead of calling Ruff directly. It uses a pair of fixtures whose result differs between `line-length: "40"` and Ruff's default, so a value that never reaches Ruff fails the test. `format-tests` also checks at the end that every fixture is unchanged.
 
 ### Changed
 

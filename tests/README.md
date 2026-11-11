@@ -11,9 +11,14 @@ unrelated to the orb.
 - `clean/compliant.py` reports no violations under Ruff's default rule set and
   is already formatted, so both `ruff/check` and `ruff/format` must pass on it
   with the default parameters. It reports exactly four `E501` lines at
-  `line-length: "40"` with `extend-selected-rules: E501`. The `line-length`
-  test and the report-replacement test both depend on that count, so keep it
-  in mind when editing the fixture.
+  `line-length: "40"` with `extend-selected-rules: E501`. The `ruff/check`
+  `line-length` test and the report-replacement test both depend on that
+  count. It is also not formatted at `line-length: "40"`, which the format
+  `line-length` test depends on. Keep both in mind when editing the fixture.
+- `line-length/formatted_at_40.py` reports no violations under the default
+  rule set. It is formatted at `line-length: "40"` but not at Ruff's default
+  of 88, the reverse of `clean/compliant.py`. The format `line-length` test
+  uses the two together, so do not reformat it at the default length.
 - `violations/unused_import.py` reports `F401` and nothing else. It backs the
   `output-file`, `tee`, `ignored-rules` and `exit-zero` tests, and it must stay
   reported under `selected-rules: F`.
@@ -33,6 +38,39 @@ for asserting that `fix: never` leaves the checkout untouched.
 Do not introduce any other violation into these files. Several tests assert on
 the absence of a rule as well as its presence, so an extra violation would
 make them pass or fail for the wrong reason.
+
+## Format line-length test
+
+`format-tests` exercises `line-length` through both `src/scripts/format.sh`
+and the `ruff/format` command. With Ruff 0.16.2, the two fixtures above give
+opposite answers at the default line length of 88 and at `40`. This detects
+a dropped `line-length: "40"` value that falls back to 88, or a supplied
+value that is forced to 88.
+
+These cases do not detect every incorrect line length. For example, replacing
+40 with 41 produces the same asserted results for these fixtures. The tests
+check the expected formatting behavior for the selected cases; proving that
+the exact requested value reaches Ruff also requires checking the arguments
+passed to Ruff.
+
+- `Verify line-length reaches the formatter through format.sh` runs
+  `src/scripts/format.sh` on each fixture with and without
+  `line-length: "40"`. It asserts the exact exit status and a summary line,
+  and that the fixture is unchanged afterwards. A `diff` case also asserts a
+  complete added line from the expected diff at 40. This distinguishes that
+  case from check-mode diagnostics, but does not uniquely identify the line
+  length used.
+- The `ruff/format` step after it passes `line-length: "40"` through the Orb
+  command, so the mapping in `src/commands/format.yml` is covered as well.
+- `Record the fixtures` takes a SHA-256 snapshot of `tests/` after checkout.
+  `Verify the fixtures are unchanged` compares against it at the end of the
+  job.
+
+To confirm that the test still catches a dropped value, break it on a
+throwaway branch. Removing the `--line-length` handling from
+`src/scripts/format.sh` fails both line-length steps. Removing
+`PARAM_LINE_LENGTH` from the environment in `src/commands/format.yml` fails
+the `ruff/format` step. Do not merge either change.
 
 ## Report regression
 

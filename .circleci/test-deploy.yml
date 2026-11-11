@@ -21,6 +21,7 @@ commands:
             set -euo pipefail
 
             test -s tests/clean/compliant.py
+            test -s tests/line-length/formatted_at_40.py
             test -s tests/violations/undefined_name.py
             test -s tests/violations/unsorted_imports.py
             test -s tests/violations/unused_import.py
@@ -209,9 +210,9 @@ jobs:
               exit 1
             fi
 
-      # Directory scanning plus exclusion. Only tests/clean and
-      # tests/unformatted survive, and neither reports a violation, so this
-      # passes only when extend-excluded-paths is applied.
+      # Directory scanning plus exclusion. Only tests/clean, tests/line-length
+      # and tests/unformatted survive, and none of them reports a violation,
+      # so this passes only when extend-excluded-paths is applied.
       - ruff/check:
           extend-excluded-paths: tests/violations
           targets: tests
@@ -699,6 +700,20 @@ jobs:
       - checkout
       - verify-fixtures
 
+      # Several tests below rewrite a fixture and restore it. The snapshot
+      # lets the line-length test start from pristine fixtures and lets the
+      # last step prove that nothing was left modified.
+      - run:
+          name: Record the fixtures
+          command: |
+            set -euo pipefail
+
+            find tests -type f -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 sha256sum > /tmp/fixtures-before.sha256
+
+            cat /tmp/fixtures-before.sha256
+
       - ruff/install:
           version: "0.16.2"
 
@@ -886,26 +901,133 @@ jobs:
 
             echo 'exit-non-zero-on-format correctly reported the rewrite.'
 
-      # line-length is a first class formatter flag, so a short value must
-      # make the otherwise formatted fixture fail the gate.
+      # line-length has to travel from the Orb to Ruff. The two fixtures give
+      # opposite answers at Ruff's default of 88 and at 40:
+      # tests/clean/compliant.py is formatted at 88 but not at 40, and
+      # tests/line-length/formatted_at_40.py is formatted at 40 but not at 88.
+      # A value that is dropped or replaced on the way therefore changes at
+      # least one result. The cases run format.sh, assert the exact exit
+      # status and a line of the output, and confirm that check and diff
+      # leave the fixture untouched.
       - run:
-          name: Verify line-length reaches the formatter
+          name: Verify line-length reaches the formatter through format.sh
           command: |
             set -euo pipefail
 
-            set +e
-            output="$(
-              ruff format --check --line-length 20 tests/clean 2>&1
-            )"
-            status=$?
-            set -e
+            # Start from the fixtures as checked out.
+            sha256sum --check --quiet /tmp/fixtures-before.sha256
 
-            printf '%s\n' "${output}"
+            failures=0
 
-            if [ "${status}" -eq 0 ]; then
-              echo 'A line length of 20 unexpectedly left the fixture formatted'
+            run_format() {
+              PARAM_CACHE_DIR='' \
+              PARAM_COLOR='auto' \
+              PARAM_CONFIG_FILE='' \
+              PARAM_CONFIG_OVERRIDES='' \
+              PARAM_EXCLUDED_PATHS='' \
+              PARAM_EXIT_NON_ZERO_ON_FORMAT='false' \
+              PARAM_EXTEND_EXCLUDED_PATHS='' \
+              PARAM_EXTENSIONS='' \
+              PARAM_EXTRA_ARGS='' \
+              PARAM_FORCE_EXCLUDE='auto' \
+              PARAM_ISOLATED='false' \
+              PARAM_LINE_LENGTH="$2" \
+              PARAM_MODE="$1" \
+              PARAM_NO_CACHE='false' \
+              PARAM_OUTPUT_FORMAT='default' \
+              PARAM_PREVIEW='auto' \
+              PARAM_RESPECT_GITIGNORE='auto' \
+              PARAM_TARGETS="$3" \
+              PARAM_TARGET_VERSION='default' \
+              PARAM_VERBOSITY='default' \
+                bash src/scripts/format.sh
+            }
+
+            # check_case NAME MODE LINE_LENGTH FILE STATUS LINE
+            #
+            # Runs format.sh on FILE and expects exit STATUS, LINE as a whole
+            # line of the output, and FILE unchanged afterwards.
+            check_case() {
+              local before output status
+
+              before="$(sha256sum "$4")"
+
+              set +e
+              output="$(run_format "$2" "$3" "$4" 2>&1)"
+              status=$?
+              set -e
+
+              echo "----- $1 (exit status ${status}) -----"
+              printf '%s\n' "${output}"
+
+              if [ "${status}" -ne "$5" ]; then
+                echo "FAIL [$1]: expected exit status $5, got ${status}"
+                failures=$((failures + 1))
+              fi
+
+              if ! printf '%s\n' "${output}" | grep -Fxq -- "$6"; then
+                echo "FAIL [$1]: the output has no line '$6'"
+                failures=$((failures + 1))
+              fi
+
+              if [ "$(sha256sum "$4")" != "${before}" ]; then
+                echo "FAIL [$1]: $2 mode modified $4"
+                failures=$((failures + 1))
+              fi
+            }
+
+            wide=tests/clean/compliant.py
+            narrow=tests/line-length/formatted_at_40.py
+
+            # Without line-length both fixtures give the default answer. A
+            # value that never reached Ruff would give the same answer at 40.
+            check_case wide-default check '' "${wide}" 0 \
+              '1 file already formatted'
+            check_case narrow-default check '' "${narrow}" 1 \
+              '1 file would be reformatted'
+
+            check_case wide-40 check 40 "${wide}" 1 \
+              '1 file would be reformatted'
+            check_case narrow-40 check 40 "${narrow}" 0 \
+              '1 file already formatted'
+
+            # diff prints the wrapping that line-length 40 produces. The check
+            # mode output shows the same code with line numbers in front, so
+            # this whole line only appears in diff mode.
+            check_case wide-40-diff diff 40 "${wide}" 1 \
+              '+    build_greeting("world"),'
+
+            if [ "${failures}" -ne 0 ]; then
+              echo "${failures} line-length assertion(s) failed"
               exit 1
             fi
+
+            echo 'line-length reached Ruff through format.sh in check and diff mode.'
+
+      # The same check through the Orb command, which also covers the mapping
+      # from the line-length parameter to PARAM_LINE_LENGTH in
+      # src/commands/format.yml. The fixture is formatted at 40 but not at
+      # Ruff's default, so this step passes only when the value reaches Ruff.
+      - ruff/format:
+          line-length: "40"
+          targets: tests/line-length/formatted_at_40.py
+
+      # Every test above restores what it changes. Comparing with the
+      # snapshot catches a fixture that was left modified, or a file that was
+      # left behind, either of which could let a later test pass for the
+      # wrong reason.
+      - run:
+          name: Verify the fixtures are unchanged
+          command: |
+            set -euo pipefail
+
+            find tests -type f -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 sha256sum > /tmp/fixtures-after.sha256
+
+            diff -u /tmp/fixtures-before.sha256 /tmp/fixtures-after.sha256
+
+            echo 'Every fixture matches the checkout.'
 
   install-tests:
     docker:
