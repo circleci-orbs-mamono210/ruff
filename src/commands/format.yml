@@ -5,7 +5,7 @@ description: >
   The default mode is 'check', which reports the files that would be
   reformatted instead of rewriting them.
 parameters:
-  cache-dir:
+  cache_dir:
     default: ''
     description: >
       Path to Ruff's cache directory (ruff '--cache-dir'). Empty keeps Ruff's
@@ -20,7 +20,7 @@ parameters:
       not a TTY, and makes a 'diff' mode run considerably easier to read.
     enum: ["auto", "always", "never"]
     type: enum
-  config-file:
+  config_file:
     default: ''
     description: >
       Path of a TOML config file to use (ruff '--config'), for example
@@ -28,7 +28,7 @@ parameters:
       'ruff.toml' or '.ruff.toml'. Cannot be combined with 'isolated'; Ruff
       rejects that combination itself.
     type: string
-  config-overrides:
+  config_overrides:
     default: ''
     description: >
       Newline separated list of TOML 'KEY = VALUE' pairs, each passed as its
@@ -37,14 +37,14 @@ parameters:
       config file. One pair per line, because a TOML pair contains
       whitespace and cannot be split on it. Blank lines are ignored.
     type: string
-  excluded-paths:
+  excluded_paths:
     default: ''
     description: >
       Comma separated list of file patterns to omit from the run
       (ruff '--exclude'). This REPLACES Ruff's default exclusion list, so
-      prefer 'extend-excluded-paths' unless that is intended.
+      prefer 'extend_excluded_paths' unless that is intended.
     type: string
-  exit-non-zero-on-format:
+  exit_non_zero_on_format:
     default: false
     description: >
       Fail the step when Ruff reformatted any file, even though the
@@ -52,7 +52,7 @@ parameters:
       meaningful in 'write' mode, where it turns a job that rewrites files
       into one that also reports having done so.
     type: boolean
-  extend-excluded-paths:
+  extend_excluded_paths:
     default: ''
     description: >
       Comma separated list of extra file patterns to omit on top of Ruff's
@@ -65,7 +65,7 @@ parameters:
       'ipy:ipynb', separated by spaces, tabs or newlines. Empty lines are
       ignored, and each mapping is passed as its own '--extension'.
     type: string
-  extra-args:
+  extra_args:
     default: ''
     description: >
       Extra arguments appended to the 'ruff format' invocation, for options
@@ -81,7 +81,7 @@ parameters:
       nothing about what it does: Ruff decides how it combines with the
       other parameters.
     type: string
-  force-exclude:
+  force_exclude:
     default: auto
     description: >
       Whether the exclusion patterns also apply to paths passed on the
@@ -94,16 +94,16 @@ parameters:
     description: >
       Ignore every config file (ruff '--isolated'), so only the parameters of
       this command decide the outcome. Ruff itself rejects this in
-      combination with a 'config-file' path, but 'config-overrides' and
-      'line-length' are inline settings rather than files, so both still
+      combination with a 'config_file' path, but 'config_overrides' and
+      'line_length' are inline settings rather than files, so both still
       apply under 'isolated'.
     type: boolean
-  line-length:
+  line_length:
     default: ''
     description: >
       Maximum line length the formatter wraps to (ruff '--line-length').
       Empty keeps Ruff's default of 88 or the value from the config file.
-      Keep this in step with the 'line-length' used by 'ruff/check', because
+      Keep this in step with the 'line_length' used by 'ruff/check', because
       the formatter and the 'E501' rule are configured independently on the
       command line.
     type: string
@@ -120,20 +120,20 @@ parameters:
 
       Neither of the two rewrites the files it is given. This is verified
       with Ruff 0.16.2 for runs set up through the parameters of this
-      command, including settings from a config file or 'config-overrides'.
-      It does not cover 'extra-args' or other Ruff versions, and the cache
+      command, including settings from a config file or 'config_overrides'.
+      It does not cover 'extra_args' or other Ruff versions, and the cache
       is still written.
 
       'write' passes neither and REWRITES the files in place, which only
       makes sense when the job goes on to commit or otherwise use the result.
     enum: ["check", "diff", "write"]
     type: enum
-  no-cache:
+  no_cache:
     default: false
     description: >
       Disable cache reads (ruff '--no-cache').
     type: boolean
-  output-format:
+  output_format:
     default: default
     description: >
       Serialization format used when reporting the files that would be
@@ -153,7 +153,7 @@ parameters:
       makes an unpinned Ruff version considerably riskier.
     enum: ["auto", "enabled", "disabled"]
     type: enum
-  respect-gitignore:
+  respect_gitignore:
     default: auto
     description: >
       Whether '.gitignore' and other standard ignore files exclude paths
@@ -161,7 +161,7 @@ parameters:
       'auto' passes nothing and lets the config file decide.
     enum: ["auto", "enabled", "disabled"]
     type: enum
-  target-version:
+  target_version:
     default: default
     description: >
       Minimum Python version the formatted code must support
@@ -181,11 +181,11 @@ parameters:
       option, as standard input or as an argument file. Nothing is
       evaluated, so quotes, '$', '~' and glob characters are passed as they
       are, and a path that contains whitespace cannot be given. Pass options
-      through 'extra-args'.
+      through 'extra_args'.
 
       Since Ruff 0.16.0 the formatter also reformats Python code blocks
       inside Markdown files, so a target of '.' reaches every '.md' file in
-      the repository. Add '*.md' to 'extend-excluded-paths' when that is not
+      the repository. Add '*.md' to 'extend_excluded_paths' when that is not
       wanted.
     type: string
   verbosity:
@@ -204,24 +204,24 @@ steps:
   - run:
       name: Execute ruff format
       environment:
-        PARAM_CACHE_DIR: '<<parameters.cache-dir>>'
+        PARAM_CACHE_DIR: '<<parameters.cache_dir>>'
         PARAM_COLOR: '<<parameters.color>>'
-        PARAM_CONFIG_FILE: '<<parameters.config-file>>'
-        PARAM_CONFIG_OVERRIDES: '<<parameters.config-overrides>>'
-        PARAM_EXCLUDED_PATHS: '<<parameters.excluded-paths>>'
-        PARAM_EXIT_NON_ZERO_ON_FORMAT: '<<parameters.exit-non-zero-on-format>>'
-        PARAM_EXTEND_EXCLUDED_PATHS: '<<parameters.extend-excluded-paths>>'
+        PARAM_CONFIG_FILE: '<<parameters.config_file>>'
+        PARAM_CONFIG_OVERRIDES: '<<parameters.config_overrides>>'
+        PARAM_EXCLUDED_PATHS: '<<parameters.excluded_paths>>'
+        PARAM_EXIT_NON_ZERO_ON_FORMAT: '<<parameters.exit_non_zero_on_format>>'
+        PARAM_EXTEND_EXCLUDED_PATHS: '<<parameters.extend_excluded_paths>>'
         PARAM_EXTENSIONS: '<<parameters.extensions>>'
-        PARAM_EXTRA_ARGS: '<<parameters.extra-args>>'
-        PARAM_FORCE_EXCLUDE: '<<parameters.force-exclude>>'
+        PARAM_EXTRA_ARGS: '<<parameters.extra_args>>'
+        PARAM_FORCE_EXCLUDE: '<<parameters.force_exclude>>'
         PARAM_ISOLATED: '<<parameters.isolated>>'
-        PARAM_LINE_LENGTH: '<<parameters.line-length>>'
+        PARAM_LINE_LENGTH: '<<parameters.line_length>>'
         PARAM_MODE: '<<parameters.mode>>'
-        PARAM_NO_CACHE: '<<parameters.no-cache>>'
-        PARAM_OUTPUT_FORMAT: '<<parameters.output-format>>'
+        PARAM_NO_CACHE: '<<parameters.no_cache>>'
+        PARAM_OUTPUT_FORMAT: '<<parameters.output_format>>'
         PARAM_PREVIEW: '<<parameters.preview>>'
-        PARAM_RESPECT_GITIGNORE: '<<parameters.respect-gitignore>>'
+        PARAM_RESPECT_GITIGNORE: '<<parameters.respect_gitignore>>'
         PARAM_TARGETS: '<<parameters.targets>>'
-        PARAM_TARGET_VERSION: '<<parameters.target-version>>'
+        PARAM_TARGET_VERSION: '<<parameters.target_version>>'
         PARAM_VERBOSITY: '<<parameters.verbosity>>'
       command: <<include(scripts/format.sh)>>

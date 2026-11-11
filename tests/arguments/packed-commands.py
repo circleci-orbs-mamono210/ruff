@@ -29,6 +29,11 @@ script checks exactly that, for both commands:
    that starts Ruff, and no line before that point writes a file. 'ruff
    --version' is the first start of Ruff.
 
+It also requires every parameter name of every command, executor and job to
+be snake_case. CircleCI rejects an argument that a command does not declare,
+so a configuration that still uses a hyphenated name from 0.0.1, such as
+'output-file', fails to compile instead of being silently ignored.
+
 It prints what it found, with the SHA-256 of each script, and exits 1 if any
 check fails.
 """
@@ -45,12 +50,12 @@ FORBIDDEN_STEP_KEYS = ("when", "shell", "background", "working_directory")
 FILE_COMMANDS = re.compile(r"\b(mkdir|rm|rmdir|cp|mv|tee|touch|dd|install)\b")
 REFUSALS = {
     "check": [
-        "'fix-only' rewrites files, so it needs 'fix' set to",
-        "'extra-args' contains items that are not accepted",
+        "'fix_only' rewrites files, so it needs 'fix' set to",
+        "'extra_args' contains items that are not accepted",
     ],
     "format": [
         "Unknown mode '${PARAM_MODE}'.",
-        "'extra-args' contains items that are not accepted",
+        "'extra_args' contains items that are not accepted",
     ],
 }
 
@@ -275,6 +280,22 @@ def main():
                 and normalise(text).split("\n")[-1].strip() == "ruff --version"
             ):
                 failures.append(f"{name}: a step does nothing but print the version")
+
+    # Public names are snake_case. A hyphenated name left behind would keep an
+    # old 0.0.1 spelling alive next to the new ones.
+    names = 0
+
+    for kind in ("commands", "executors", "jobs"):
+        for name, component in (packed.get(kind) or {}).items():
+            for parameter in component.get("parameters") or {}:
+                names += 1
+
+                if not re.fullmatch(r"[a-z][a-z0-9]*(_[a-z0-9]+)*", parameter):
+                    failures.append(
+                        f"{kind}.{name}: parameter '{parameter}' is not snake_case"
+                    )
+
+    print(f"Parameter names: {names} checked for snake_case")
 
     if failures:
         print()

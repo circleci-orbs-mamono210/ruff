@@ -107,16 +107,16 @@ jobs:
 
       # E501 is not in the default rule set, so the clean fixture only stops
       # being clean once both the rule and a short line length are supplied.
-      # E501 in the report is what proves line-length reached Ruff.
+      # E501 in the report is what proves line_length reached Ruff.
       - ruff/check:
-          exit-zero: true
-          extend-selected-rules: E501
-          line-length: "40"
-          output-file: reports/line-length.txt
+          exit_zero: true
+          extend_selected_rules: E501
+          line_length: "40"
+          output_file: reports/line-length.txt
           targets: tests/clean/compliant.py
 
       - run:
-          name: Verify line-length changed the outcome
+          name: Verify line_length changed the outcome
           command: |
             set -euo pipefail
 
@@ -135,10 +135,10 @@ jobs:
       # Ruff truncates the output file rather than appending to it. Re-running
       # the same step must therefore leave the same number of findings.
       - ruff/check:
-          exit-zero: true
-          extend-selected-rules: E501
-          line-length: "40"
-          output-file: reports/line-length.txt
+          exit_zero: true
+          extend_selected_rules: E501
+          line_length: "40"
+          output_file: reports/line-length.txt
           targets: tests/clean/compliant.py
 
       - run:
@@ -157,22 +157,22 @@ jobs:
             fi
 
       # unused_import.py violates F401 only, so this passes if and only if
-      # ignored-rules is honoured.
+      # ignored_rules is honoured.
       - ruff/check:
-          ignored-rules: F401
+          ignored_rules: F401
           targets: tests/violations/unused_import.py
 
       # unsorted_imports.py violates I001 only, and unused_import.py violates
       # F401 only. Selecting F must therefore report the second and drop the
       # first.
       - ruff/check:
-          exit-zero: true
-          output-file: reports/select.txt
-          selected-rules: F
+          exit_zero: true
+          output_file: reports/select.txt
+          selected_rules: F
           targets: tests/violations
 
       - run:
-          name: Verify selected-rules limited the report
+          name: Verify selected_rules limited the report
           command: |
             set -euo pipefail
 
@@ -182,16 +182,16 @@ jobs:
             grep -q 'F401' reports/select.txt
 
             if grep -q 'I001' reports/select.txt; then
-              echo 'selected-rules did not limit the reported rules'
+              echo 'selected_rules did not limit the reported rules'
               exit 1
             fi
 
       # Restoring the pre-0.16.0 default set must drop I001 as well, because
       # the isort rules are not part of it.
       - ruff/check:
-          exit-zero: true
-          output-file: reports/legacy-defaults.txt
-          selected-rules: E4,E7,E9,F
+          exit_zero: true
+          output_file: reports/legacy-defaults.txt
+          selected_rules: E4,E7,E9,F
           targets: tests/violations
 
       - run:
@@ -212,29 +212,29 @@ jobs:
 
       # Directory scanning plus exclusion. Only tests/clean, tests/line-length
       # and tests/unformatted survive, and none of them reports a violation,
-      # so this passes only when extend-excluded-paths is applied.
+      # so this passes only when extend_excluded_paths is applied.
       - ruff/check:
-          extend-excluded-paths: tests/violations
+          extend_excluded_paths: tests/violations
           targets: tests
 
-      # Ruff separates the per-file-ignores pairs with commas, unlike flake8.
+      # Ruff separates the per_file_ignores pairs with commas, unlike flake8.
       - ruff/check:
-          per-file-ignores: "tests/violations/unused_import.py:F401,tests/violations/unsorted_imports.py:I001,tests/violations/undefined_name.py:F821"
+          per_file_ignores: "tests/violations/unused_import.py:F401,tests/violations/unsorted_imports.py:I001,tests/violations/undefined_name.py:F821"
           targets: tests/violations
 
       # Each entry is a single 'pattern:rule' pair, so covering three rules
       # under one pattern means repeating the pattern three times.
       - ruff/check:
-          extend-per-file-ignores: "tests/violations/*:F401,tests/violations/*:I001,tests/violations/*:F821"
+          extend_per_file_ignores: "tests/violations/*:F401,tests/violations/*:I001,tests/violations/*:F821"
           targets: tests/violations
 
       # Smoke test for argument construction: whitespace separated targets
       # together with several independent flags.
       - ruff/check:
           color: always
-          no-cache: true
+          no_cache: true
           statistics: true
-          target-version: py311
+          target_version: py311
           targets: tests/clean tests/clean/compliant.py
           verbosity: verbose
 
@@ -242,26 +242,26 @@ jobs:
       # Neither option changes the reported violations, so the step only fails
       # if the splitting itself is broken.
       - ruff/check:
-          extra-args: --extend-fixable F401 --no-show-fixes
+          extra_args: --extend-fixable F401 --no-show-fixes
           targets: tests/clean
 
-      # extra-args that are not refused still run through the published
+      # extra_args that are not refused still run through the published
       # command, one per line, and the step prints the Ruff version first.
       # '--show-settings' makes Ruff print its settings instead of checking.
       # What reaches Ruff for these and what is refused is asserted by
       # tests/arguments/regression.sh below.
       - ruff/check:
-          extra-args: |
+          extra_args: |
             --extend-fixable F401
             --no-show-fixes
           targets: tests/clean
 
       - ruff/check:
-          extra-args: --show-settings
+          extra_args: --show-settings
           targets: tests/clean/compliant.py
 
       # Ruff exits 2 on a configuration or command line error without
-      # touching output-file, so an earlier run's report must not be printed
+      # touching output_file, so an earlier run's report must not be printed
       # or kept as this run's result. The script seeds each report with a
       # marker and covers success, violations and errors with tee on and off,
       # repeated runs into the same file, and failures to prepare or read the
@@ -272,18 +272,18 @@ jobs:
           name: Verify the report reflects only the latest run
           command: bash tests/report/regression.sh
 
-      # config-overrides carries whitespace inside each value, so this proves
+      # config_overrides carries whitespace inside each value, so this proves
       # the parameter is split on newlines rather than on whitespace.
       - ruff/check:
-          config-overrides: |
+          config_overrides: |
             lint.extend-select = ["E501"]
             line-length = 40
-          exit-zero: true
-          output-file: reports/config-overrides.txt
+          exit_zero: true
+          output_file: reports/config-overrides.txt
           targets: tests/clean/compliant.py
 
       - run:
-          name: Verify config-overrides reached Ruff
+          name: Verify config_overrides reached Ruff
           command: |
             set -euo pipefail
 
@@ -315,7 +315,7 @@ jobs:
             printf '%s\n' "${output}"
 
             if [ "${status}" -ne 0 ]; then
-              echo "Expected exit-zero to succeed, got ${status}"
+              echo "Expected exit_zero to succeed, got ${status}"
               exit 1
             fi
 
@@ -348,7 +348,7 @@ jobs:
             printf '%s\n' "${output}"
 
             if [ "${status}" -ne 0 ]; then
-              echo "Expected exit-zero to succeed, got ${status}"
+              echo "Expected exit_zero to succeed, got ${status}"
               exit 1
             fi
 
@@ -388,7 +388,7 @@ jobs:
       # something rather than passing a flag with no effect. I001 is fixable,
       # so the fixture is repaired and then restored.
       - run:
-          name: Verify fix safe rewrites and exit-non-zero-on-fix reports it
+          name: Verify fix safe rewrites and exit_non_zero_on_fix reports it
           command: |
             set -euo pipefail
 
@@ -412,7 +412,7 @@ jobs:
 
             # I001 is the fixture's only violation and it is fixable, so
             # nothing remains to report and the status comes solely from
-            # exit-non-zero-on-fix. Ruff uses 1 for that and 2 for an error.
+            # exit_non_zero_on_fix. Ruff uses 1 for that and 2 for an error.
             if [ "${status}" -ne 1 ]; then
               echo "Expected exit status 1, got ${status}"
               cp /tmp/unsorted_imports.orig tests/violations/unsorted_imports.py
@@ -426,7 +426,7 @@ jobs:
       # '--fix-only' implies '--fix' and wins over '--no-fix', so the command
       # refuses the combination rather than rewriting files silently.
       - run:
-          name: Verify fix-only cannot be combined with fix never
+          name: Verify fix_only cannot be combined with fix never
           command: |
             set -euo pipefail
 
@@ -445,13 +445,13 @@ jobs:
               exit 1
             fi
 
-            echo 'The fix-only/fix combination correctly failed.'
+            echo 'The fix_only/fix combination correctly failed.'
 
       # The command documents that Ruff rejects 'isolated' together with a
-      # 'config-file' path. Assert that, so the documentation cannot go stale
+      # 'config_file' path. Assert that, so the documentation cannot go stale
       # without a test noticing.
       - run:
-          name: Verify isolated and config-file cannot be combined
+          name: Verify isolated and config_file cannot be combined
           command: |
             set -euo pipefail
 
@@ -478,7 +478,7 @@ jobs:
             # combination itself rather than from a missing path.
             test -s /tmp/probe-config.toml
 
-            echo 'The isolated/config-file combination correctly failed.'
+            echo 'The isolated/config_file combination correctly failed.'
 
       # Ruff draws its isolated/config line at FILES, not at settings, so an
       # inline override must still apply under isolated. F401 is the
@@ -498,18 +498,18 @@ jobs:
 
             echo 'Config overrides were applied under isolated.'
 
-      # 'line-length' is passed as an inline override too, so it must survive
+      # 'line_length' is passed as an inline override too, so it must survive
       # isolated as well. E501 in the report is what proves it arrived.
       - ruff/check:
-          exit-zero: true
-          extend-selected-rules: E501
+          exit_zero: true
+          extend_selected_rules: E501
           isolated: true
-          line-length: "40"
-          output-file: reports/isolated-line-length.txt
+          line_length: "40"
+          output_file: reports/isolated-line-length.txt
           targets: tests/clean/compliant.py
 
       - run:
-          name: Verify line-length survives isolated
+          name: Verify line_length survives isolated
           command: |
             set -euo pipefail
 
@@ -519,9 +519,9 @@ jobs:
             grep -q 'E501' reports/isolated-line-length.txt
 
       # Ruff exits 2 for a missing config file and for a command line error,
-      # and exit-zero applies to reported violations only.
+      # and exit_zero applies to reported violations only.
       - run:
-          name: Verify exit-zero does not mask configuration errors
+          name: Verify exit_zero does not mask configuration errors
           command: |
             set -euo pipefail
 
@@ -544,7 +544,7 @@ jobs:
 
             echo 'The configuration error correctly remained a failure.'
 
-      # Verify that targets and extra-args are split into arrays without Bash
+      # Verify that targets and extra_args are split into arrays without Bash
       # pathname expansion. Both values below match files or directories in
       # the checkout if normal glob expansion is accidentally performed.
       - run:
@@ -582,7 +582,7 @@ jobs:
             # globs before invoking Ruff, these strings would not exist.
             if ! printf '%s\n' "${command_line}" |
               grep -Fq -- '--extend-exclude \*.pyi'; then
-              echo 'extra-args glob was expanded unexpectedly'
+              echo 'extra_args glob was expanded unexpectedly'
               exit 1
             fi
 
@@ -594,19 +594,19 @@ jobs:
 
             echo 'Globs were preserved as literal Ruff arguments.'
 
-      # targets, extensions and extra-args are split on spaces, tabs and
+      # targets, extensions and extra_args are split on spaces, tabs and
       # newlines, and the paths follow '--', with './' in front of a relative
       # path that starts with '-' or '@'. The script compares what a recording
       # stand-in for Ruff receives with the expected lists, then runs Ruff
       # 0.16.2 on files named '-', '--help' and '@args'.
       #
-      # It also covers what check.sh refuses. Each refused extra-args item
+      # It also covers what check.sh refuses. Each refused extra_args item
       # runs check.sh as a child process, and the case passes only when that
       # process exits 1, the stand-in was not started even for
       # 'ruff --version', and the target and an existing report are unchanged.
       # A refusal is therefore never a failing step of this job. With the
       # real Ruff it checks that 'fix: never' leaves a file alone when
-      # ruff.toml, pyproject.toml or config-overrides set 'fix-only = true'.
+      # ruff.toml, pyproject.toml or config_overrides set 'fix-only = true'.
       # packed-command-tests checks that the published command runs this
       # same check.sh. Everything happens in a temporary directory, so
       # nothing is added to reports/.
@@ -648,7 +648,7 @@ jobs:
               reports/tee.txt
             )
 
-            # check.sh empties output-file before Ruff runs. These runs stop
+            # check.sh empties output_file before Ruff runs. These runs stop
             # on a configuration error, or run under 'quiet' or 'silent', so
             # Ruff writes nothing and the report is empty by design.
             empty=(
@@ -736,7 +736,7 @@ jobs:
       - verify-fixtures
 
       # Several tests below rewrite a fixture and restore it. The snapshot
-      # lets the line-length test start from pristine fixtures and lets the
+      # lets the line_length test start from pristine fixtures and lets the
       # last step prove that nothing was left modified.
       - run:
           name: Record the fixtures
@@ -893,10 +893,10 @@ jobs:
 
             echo 'diff mode correctly failed and printed the change.'
 
-      # 'exit-non-zero-on-format' turns a successful rewrite into a failure,
+      # 'exit_non_zero_on_format' turns a successful rewrite into a failure,
       # which is how a 'write' mode job reports that it changed something.
       - run:
-          name: Verify exit-non-zero-on-format reports a rewrite
+          name: Verify exit_non_zero_on_format reports a rewrite
           command: |
             set -euo pipefail
 
@@ -934,9 +934,9 @@ jobs:
               exit 1
             fi
 
-            echo 'exit-non-zero-on-format correctly reported the rewrite.'
+            echo 'exit_non_zero_on_format correctly reported the rewrite.'
 
-      # line-length has to travel from the Orb to Ruff. The two fixtures give
+      # line_length has to travel from the Orb to Ruff. The two fixtures give
       # opposite answers at Ruff's default of 88 and at 40:
       # tests/clean/compliant.py is formatted at 88 but not at 40, and
       # tests/line-length/formatted_at_40.py is formatted at 40 but not at 88.
@@ -945,7 +945,7 @@ jobs:
       # status and a line of the output, and confirm that check and diff
       # leave the fixture untouched.
       - run:
-          name: Verify line-length reaches the formatter through format.sh
+          name: Verify line_length reaches the formatter through format.sh
           command: |
             set -euo pipefail
 
@@ -1014,7 +1014,7 @@ jobs:
             wide=tests/clean/compliant.py
             narrow=tests/line-length/formatted_at_40.py
 
-            # Without line-length both fixtures give the default answer. A
+            # Without line_length both fixtures give the default answer. A
             # value that never reached Ruff would give the same answer at 40.
             check_case wide-default check '' "${wide}" 0 \
               '1 file already formatted'
@@ -1026,31 +1026,31 @@ jobs:
             check_case narrow-40 check 40 "${narrow}" 0 \
               '1 file already formatted'
 
-            # diff prints the wrapping that line-length 40 produces. The check
+            # diff prints the wrapping that line_length 40 produces. The check
             # mode output shows the same code with line numbers in front, so
             # this whole line only appears in diff mode.
             check_case wide-40-diff diff 40 "${wide}" 1 \
               '+    build_greeting("world"),'
 
             if [ "${failures}" -ne 0 ]; then
-              echo "${failures} line-length assertion(s) failed"
+              echo "${failures} line_length assertion(s) failed"
               exit 1
             fi
 
-            echo 'line-length reached Ruff through format.sh in check and diff mode.'
+            echo 'line_length reached Ruff through format.sh in check and diff mode.'
 
       # The same check through the Orb command, which also covers the mapping
-      # from the line-length parameter to PARAM_LINE_LENGTH in
+      # from the line_length parameter to PARAM_LINE_LENGTH in
       # src/commands/format.yml. The fixture is formatted at 40 but not at
       # Ruff's default, so this step passes only when the value reaches Ruff.
       - ruff/format:
-          line-length: "40"
+          line_length: "40"
           targets: tests/line-length/formatted_at_40.py
 
-      # extra-args that are not refused still run through the published
+      # extra_args that are not refused still run through the published
       # command, and the step prints the Ruff version first.
       - ruff/format:
-          extra-args: |
+          extra_args: |
             --no-force-exclude
             --no-preview
           targets: tests/clean
@@ -1058,7 +1058,7 @@ jobs:
       # The same argument and refusal cases as in parameter-tests, against
       # format.sh. With the real Ruff they also check that the 'check' and
       # 'diff' modes leave a file alone when ruff.toml, pyproject.toml or
-      # config-overrides make the formatter want to change it. They work in a
+      # config_overrides make the formatter want to change it. They work in a
       # temporary directory, so the fixtures stay untouched.
       - run:
           name: Verify the arguments passed to Ruff and the refused input

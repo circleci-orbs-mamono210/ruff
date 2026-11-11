@@ -41,14 +41,14 @@ case "${PARAM_MODE}" in
     ;;
 esac
 
-# Split extra-args on spaces, tabs and newlines, like targets and extensions
+# Split extra_args on spaces, tabs and newlines, like targets and extensions
 # below, so every line counts and empty lines vanish. Nothing is evaluated:
 # quotes, '$', '~' and glob characters stay literal, and an argument that
 # contains whitespace cannot be expressed.
 IFS=$' \t\n' read -r -d '' -a EXTRA_ARGS \
   < <(printf '%s\0' "${PARAM_EXTRA_ARGS}")
 
-# extra-args is passed through as it is, with one exception that applies in
+# extra_args is passed through as it is, with one exception that applies in
 # every mode: '--' and '@name' would change how the rest of the command line
 # is read. The script puts '--' before the paths itself, and Ruff expands
 # '@name' as an argument file wherever it appears. The check looks at the
@@ -69,7 +69,7 @@ done
 
 if [ "${#REJECTED[@]}" -ne 0 ]; then
   {
-    echo "'extra-args' contains items that are not accepted, so Ruff was not run:"
+    echo "'extra_args' contains items that are not accepted, so Ruff was not run:"
     printf '  %s\n' "${REJECTED[@]}"
   } >&2
   exit 1
@@ -196,7 +196,7 @@ if is_true "${PARAM_EXIT_NON_ZERO_ON_FORMAT}"; then
   RUFF_ARGS+=('--exit-non-zero-on-format')
 fi
 
-# extra-args was split and checked at the top of the script.
+# extra_args was split and checked at the top of the script.
 RUFF_ARGS+=("${EXTRA_ARGS[@]}")
 
 # targets holds paths and nothing else. It is split like extensions, and an

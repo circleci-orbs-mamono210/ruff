@@ -5,7 +5,7 @@ description: >
 
   Ruff has no plugin system, so unlike flake8 there is nothing to install
   alongside it. Every rule Ruff can report is built into the binary and is
-  selected with the 'selected-rules' parameter of 'ruff/check'.
+  selected with the 'selected_rules' parameter of 'ruff/check'.
 parameters:
   version:
     default: ''

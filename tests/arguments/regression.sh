@@ -1,6 +1,6 @@
 #!/bin/bash
 # Regression cases for how src/scripts/check.sh and src/scripts/format.sh pass
-# 'targets', 'extensions' and 'extra-args' to Ruff, and for the input they
+# 'targets', 'extensions' and 'extra_args' to Ruff, and for the input they
 # refuse.
 #
 # Both scripts used to read only the first line of each parameter, so paths,
@@ -8,7 +8,7 @@
 # reached Ruff without '--': a target named '--help' ran as an option, '-'
 # made Ruff read standard input and '@args' was expanded as an argument file.
 # 'fix: never' used to pass '--no-fix' alone, which 'fix-only = true' in a
-# configuration overrides, and 'extra-args' could add '--fix' to it.
+# configuration overrides, and 'extra_args' could add '--fix' to it.
 #
 # Usage, from anywhere inside the repository:
 #
@@ -22,7 +22,7 @@
 #
 # The argument cases put a copy of tests/arguments/record-ruff.sh first on
 # PATH and compare what it receives with the expected lists: the paths after
-# '--', the value of every '--extension' and the arguments that 'extra-args'
+# '--', the value of every '--extension' and the arguments that 'extra_args'
 # adds. The 'Command:' line must show exactly the arguments received. The
 # refusal cases use the same stand-in and require a non-zero status, no call
 # of Ruff at all, not even 'ruff --version', and an unchanged target and
@@ -176,7 +176,7 @@ printf '%s\n' "${BAD_SOURCE}" > "${REFUSE_DIR}/target.py"
 printf '%s\n' 'REPORT OF AN EARLIER RUN' > "${REFUSE_DIR}/report.txt"
 
 # One directory per way a configuration can reach Ruff: its own ruff.toml,
-# its own pyproject.toml, and 'config-overrides', which is given per case.
+# its own pyproject.toml, and 'config_overrides', which is given per case.
 # For check.sh the setting asks Ruff to apply fixes without reporting. For
 # format.sh it makes the formatter want to change code that is formatted
 # under the defaults.
@@ -355,7 +355,7 @@ expect_refuse_dir_unchanged() {
 # prints no 'Command:' line, did not start the stand-in even for
 # 'ruff --version', and left the target, the existing report and the rest of
 # REFUSE_DIR exactly as they were. check.sh is also given the report as
-# 'output-file', so preparing it too early would empty it.
+# 'output_file', so preparing it too early would empty it.
 run_refused() {
   local name="$1"
   local -a report=()
@@ -374,7 +374,7 @@ run_refused() {
     "${report[@]}" \
     "$@"
   expect_status 1
-  expect_log_line "'extra-args' contains items that are not accepted, so Ruff was not run:"
+  expect_log_line "'extra_args' contains items that are not accepted, so Ruff was not run:"
   expect_log_lacks 'Command:'
 
   if [ -e "${CALLS_FILE}" ] || [ -e "${ARGV_FILE}" ]; then
@@ -411,7 +411,7 @@ expect_arguments() {
 }
 
 # expect_extra ARGUMENT... asserts that the arguments before '--' are those of
-# the run without extra-args, counted in BASELINE_COUNT and described in
+# the run without extra_args, counted in BASELINE_COUNT and described in
 # BASELINE, followed by exactly these.
 expect_extra() {
   if [ "${#BEFORE[@]}" -lt "${BASELINE_COUNT}" ] ||
@@ -638,7 +638,7 @@ expect_extensions pya:python pyb:python
 expect_paths src ./- tests
 
 # ---------------------------------------------------------------------------
-# extra-args, as received by the stand-in. The items are split like targets
+# extra_args, as received by the stand-in. The items are split like targets
 # and appended after the arguments the parameters produce. BASELINE holds
 # those arguments for the defaults: 'fix: never' passes both '--no-fix' and
 # '--no-fix-only', and the format mode 'check' passes '--check'.
@@ -729,7 +729,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# extra-args that are refused. '--' and an item that starts with '@' are
+# extra_args that are refused. '--' and an item that starts with '@' are
 # refused whatever 'fix' or 'mode' says.
 # ---------------------------------------------------------------------------
 
@@ -810,7 +810,7 @@ if [ "${COMMAND}" = 'check' ]; then
     PARAM_OUTPUT_FILE='report.txt' \
     PARAM_TARGETS='target.py'
   expect_status 1
-  expect_log_line "'fix-only' rewrites files, so it needs 'fix' set to 'auto', 'safe' or 'unsafe'."
+  expect_log_line "'fix_only' rewrites files, so it needs 'fix' set to 'auto', 'safe' or 'unsafe'."
 
   if [ -e "${CALLS_FILE}" ]; then
     fail 'Ruff was started'
@@ -893,7 +893,7 @@ expect_same_log "${DOT_LOG}"
 # ---------------------------------------------------------------------------
 # The real Ruff with a configuration that asks for changes. For check.sh it
 # sets 'fix-only = true', which '--no-fix' alone does not stop, in ruff.toml,
-# in pyproject.toml and through 'config-overrides'. Under 'fix: never' the
+# in pyproject.toml and through 'config_overrides'. Under 'fix: never' the
 # file must stay as it is and the violation must be reported, and with 'diff'
 # the fix must be shown instead. For format.sh the configuration makes the
 # 'check' and 'diff' modes want a change, which they must report or show
@@ -946,7 +946,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # Exit status. The removed debug line came right before 'Command:', so pin the
-# statuses again: 0, 1 and 2 for both scripts, 'exit-zero' for check.sh, and
+# statuses again: 0, 1 and 2 for both scripts, 'exit_zero' for check.sh, and
 # the 'diff' and 'write' modes for format.sh.
 # ---------------------------------------------------------------------------
 

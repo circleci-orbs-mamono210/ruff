@@ -1,5 +1,5 @@
 #!/bin/bash
-# Regression cases for how src/scripts/check.sh handles 'output-file' and
+# Regression cases for how src/scripts/check.sh handles 'output_file' and
 # 'tee'.
 #
 # Ruff exits 2 on a configuration or command line error without touching the
@@ -243,7 +243,7 @@ expect_file_empty "${REPORT}"
 expect_log_lacks 'Report written to'
 expect_log_lacks 'is empty.'
 
-# exit-zero is the usual setting of a reporting step. It turns violations into
+# exit_zero is the usual setting of a reporting step. It turns violations into
 # 0 but must not hide a configuration error.
 REPORT="${REPORT_DIR}/exit-zero-violations.txt"
 seed "${REPORT}"

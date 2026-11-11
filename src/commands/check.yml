@@ -2,7 +2,7 @@
 description: >
   Execute 'ruff check', the Ruff linter.
 parameters:
-  cache-dir:
+  cache_dir:
     default: ''
     description: >
       Path to Ruff's cache directory (ruff '--cache-dir'). Empty keeps Ruff's
@@ -15,11 +15,11 @@ parameters:
       Colour the output (ruff '--color'). 'auto' colours only when stdout is
       a terminal, so a CircleCI job produces no colour. 'always' is useful on
       CircleCI, where the log renders ANSI escape sequences even though it is
-      not a TTY. Ruff never writes colour into 'output-file' regardless of
+      not a TTY. Ruff never writes colour into 'output_file' regardless of
       this setting.
     enum: ["auto", "always", "never"]
     type: enum
-  config-file:
+  config_file:
     default: ''
     description: >
       Path of a TOML config file to use (ruff '--config'), for example
@@ -28,13 +28,13 @@ parameters:
       Cannot be combined with 'isolated'; Ruff rejects that combination
       itself.
     type: string
-  config-overrides:
+  config_overrides:
     default: ''
     description: >
       Newline separated list of TOML 'KEY = VALUE' pairs, each passed as its
       own ruff '--config' argument, for example
       'lint.dummy-variable-rgx = "^_$"'. These take precedence over every
-      config file, including one named by 'config-file'. One pair per line,
+      config file, including one named by 'config_file'. One pair per line,
       because a TOML pair contains whitespace and cannot be split on it.
       Blank lines are ignored.
     type: string
@@ -46,22 +46,22 @@ parameters:
       printed, and the step fails when any diff exists. Use it to show what
       'fix' would change.
     type: boolean
-  excluded-paths:
+  excluded_paths:
     default: ''
     description: >
       Comma separated list of file patterns to omit from the run
       (ruff '--exclude'). This REPLACES Ruff's default exclusion list, which
       covers '.git', '__pycache__', '.venv', 'node_modules' and similar, so
-      prefer 'extend-excluded-paths' unless that is intended.
+      prefer 'extend_excluded_paths' unless that is intended.
     type: string
-  exit-non-zero-on-fix:
+  exit_non_zero_on_fix:
     default: false
     description: >
       Fail the step when Ruff modified any file, even if no violations
       remain (ruff '--exit-non-zero-on-fix'). Only meaningful when 'fix' is
       set to 'safe' or 'unsafe'.
     type: boolean
-  exit-zero:
+  exit_zero:
     default: false
     description: >
       Exit with 0 even when Ruff reports violations (ruff '--exit-zero').
@@ -69,13 +69,13 @@ parameters:
       because Ruff exits 2 for those. A path that does not exist is reported
       as a violation and exits 1, so it IS masked by this option.
     type: boolean
-  extend-excluded-paths:
+  extend_excluded_paths:
     default: ''
     description: >
       Comma separated list of extra file patterns to omit on top of Ruff's
       default exclusion list (ruff '--extend-exclude').
     type: string
-  extend-per-file-ignores:
+  extend_per_file_ignores:
     default: ''
     description: >
       Comma separated list of 'pattern:rule' pairs added on top of the
@@ -88,12 +88,12 @@ parameters:
       The list form used in a config file, '"tests/*" = ["F401", "S101"]',
       is not accepted here.
     type: string
-  extend-selected-rules:
+  extend_selected_rules:
     default: ''
     description: >
       Comma separated list of rule codes to enable on top of the current
       selection (ruff '--extend-select'), for example 'E501,D'. Unlike
-      'selected-rules' this keeps the existing selection intact, so it is
+      'selected_rules' this keeps the existing selection intact, so it is
       the usual way to add rules the default set leaves out, such as the
       line length rule 'E501' or the pydocstyle family 'D'.
     type: string
@@ -104,7 +104,7 @@ parameters:
       'ipy:ipynb', separated by spaces, tabs or newlines. Empty lines are
       ignored, and each mapping is passed as its own '--extension'.
     type: string
-  extra-args:
+  extra_args:
     default: ''
     description: >
       Extra arguments appended to the 'ruff check' invocation, for options
@@ -128,9 +128,9 @@ parameters:
     description: >
       Whether Ruff may rewrite the checked files. 'never' passes '--no-fix'
       and '--no-fix-only', so the linter applies no fixes even when a config
-      file or 'config-overrides' sets 'fix = true' or 'fix-only = true'.
+      file or 'config_overrides' sets 'fix = true' or 'fix-only = true'.
       This is verified with Ruff 0.16.2 for runs set up through the
-      parameters of this command. It does not cover 'extra-args' beyond the
+      parameters of this command. It does not cover 'extra_args' beyond the
       items refused there, or other Ruff versions, and the report and the
       cache are still written. 'auto' passes nothing, so the config file
       decides.
@@ -138,10 +138,10 @@ parameters:
       '--fix --unsafe-fixes', which applies fixes that may not preserve the
       original intent of the code. A fixing run only makes sense when the
       job commits or diffs the result, so pair it with 'diff' or with
-      'exit-non-zero-on-fix'.
+      'exit_non_zero_on_fix'.
     enum: ["never", "auto", "safe", "unsafe"]
     type: enum
-  fix-only:
+  fix_only:
     default: false
     description: >
       Apply fixes but do not report on, or exit non-zero for, the violations
@@ -156,7 +156,7 @@ parameters:
       Comma separated list of rule codes that may be fixed
       (ruff '--fixable'). Only applies when fixing is enabled.
     type: string
-  force-exclude:
+  force_exclude:
     default: auto
     description: >
       Whether the exclusion patterns also apply to paths passed on the
@@ -166,30 +166,30 @@ parameters:
       explicitly named file even if it is excluded.
     enum: ["auto", "enabled", "disabled"]
     type: enum
-  ignore-noqa:
+  ignore_noqa:
     default: false
     description: >
       Report violations on lines carrying a '# noqa' comment as well
       (ruff '--ignore-noqa'). Useful for auditing how many suppressions a
       project carries.
     type: boolean
-  ignored-rules:
+  ignored_rules:
     default: ''
     description: >
       Comma separated list of rule codes to disable (ruff '--ignore'), for
       example 'E203,D203'. Applied after the selection, so it removes rules
-      that 'selected-rules' or 'extend-selected-rules' turned on.
+      that 'selected_rules' or 'extend_selected_rules' turned on.
     type: string
   isolated:
     default: false
     description: >
       Ignore every config file (ruff '--isolated'), so only the parameters of
       this command decide the outcome. Ruff itself rejects this in
-      combination with a 'config-file' path, but 'config-overrides' and
-      'line-length' are inline settings rather than files, so both still
+      combination with a 'config_file' path, but 'config_overrides' and
+      'line_length' are inline settings rather than files, so both still
       apply under 'isolated'.
     type: boolean
-  line-length:
+  line_length:
     default: ''
     description: >
       Maximum allowed line length, passed as a
@@ -199,14 +199,14 @@ parameters:
       rule set does not include; it also affects how other rules and the
       formatter wrap code.
     type: string
-  no-cache:
+  no_cache:
     default: false
     description: >
       Disable cache reads (ruff '--no-cache'). Ruff's cache is keyed on file
       metadata and settings, so this is mainly useful when debugging a
       result that looks stale.
     type: boolean
-  output-file:
+  output_file:
     default: ''
     description: >
       Write the report to this path so it can be stored as an artifact
@@ -214,7 +214,7 @@ parameters:
       an existing file and never writes colour into it. Ruff sends nothing to
       the job log while this is set, so see the 'tee' parameter.
     type: string
-  output-format:
+  output_format:
     default: default
     description: >
       Serialization format for the reported violations
@@ -226,13 +226,13 @@ parameters:
            "grouped", "github", "gitlab", "pylint", "rdjson", "azure",
            "sarif"]
     type: enum
-  per-file-ignores:
+  per_file_ignores:
     default: ''
     description: >
       Comma separated list of 'pattern:rule' pairs applying different
       ignore lists to different files (ruff '--per-file-ignores'), for
       example '__init__.py:F401,tests/*:S101'. This REPLACES the per-file
-      ignores from the config file, so prefer 'extend-per-file-ignores'
+      ignores from the config file, so prefer 'extend_per_file_ignores'
       unless that is intended. Each pair carries exactly ONE rule code, so
       covering several rules under one pattern means repeating the pattern.
     type: string
@@ -245,7 +245,7 @@ parameters:
       so enabling them makes an unpinned Ruff version considerably riskier.
     enum: ["auto", "enabled", "disabled"]
     type: enum
-  respect-gitignore:
+  respect_gitignore:
     default: auto
     description: >
       Whether '.gitignore' and other standard ignore files exclude paths
@@ -256,17 +256,17 @@ parameters:
       linted.
     enum: ["auto", "enabled", "disabled"]
     type: enum
-  selected-rules:
+  selected_rules:
     default: ''
     description: >
       Comma separated list of rule codes to enable (ruff '--select'), or
       'ALL' for every rule. This REPLACES the selection rather than adding
-      to it, so prefer 'extend-selected-rules' when the intent is to add
+      to it, so prefer 'extend_selected_rules' when the intent is to add
       rules. Setting 'E4,E7,E9,F' here restores the rule set Ruff enabled
       by default before 0.16.0, which is the documented way to keep an
       older configuration working across that upgrade.
     type: string
-  show-fixes:
+  show_fixes:
     default: auto
     description: >
       Whether an enumeration of the applied fixes is printed
@@ -279,9 +279,9 @@ parameters:
     description: >
       Print a count per rule instead of the individual violations
       (ruff '--statistics'). This replaces the report rather than appending
-      to it, including in 'output-file'.
+      to it, including in 'output_file'.
     type: boolean
-  target-version:
+  target_version:
     default: default
     description: >
       Minimum Python version the checked code must support
@@ -302,12 +302,12 @@ parameters:
       option, as standard input or as an argument file. Nothing is
       evaluated, so quotes, '$', '~' and glob characters are passed as they
       are, and a path that contains whitespace cannot be given. Pass options
-      through 'extra-args'.
+      through 'extra_args'.
     type: string
   tee:
     default: true
     description: >
-      When 'output-file' is set, also print the report to the CircleCI log.
+      When 'output_file' is set, also print the report to the CircleCI log.
       Ruff has no '--tee' of its own and writes to the file INSTEAD of
       standard output, so this command prints the file back to the log
       afterwards. The log copy carries no colour, because Ruff does not
@@ -335,38 +335,38 @@ steps:
   - run:
       name: Execute ruff check
       environment:
-        PARAM_CACHE_DIR: '<<parameters.cache-dir>>'
+        PARAM_CACHE_DIR: '<<parameters.cache_dir>>'
         PARAM_COLOR: '<<parameters.color>>'
-        PARAM_CONFIG_FILE: '<<parameters.config-file>>'
-        PARAM_CONFIG_OVERRIDES: '<<parameters.config-overrides>>'
+        PARAM_CONFIG_FILE: '<<parameters.config_file>>'
+        PARAM_CONFIG_OVERRIDES: '<<parameters.config_overrides>>'
         PARAM_DIFF: '<<parameters.diff>>'
-        PARAM_EXCLUDED_PATHS: '<<parameters.excluded-paths>>'
-        PARAM_EXIT_NON_ZERO_ON_FIX: '<<parameters.exit-non-zero-on-fix>>'
-        PARAM_EXIT_ZERO: '<<parameters.exit-zero>>'
-        PARAM_EXTEND_EXCLUDED_PATHS: '<<parameters.extend-excluded-paths>>'
-        PARAM_EXTEND_PER_FILE_IGNORES: '<<parameters.extend-per-file-ignores>>'
-        PARAM_EXTEND_SELECTED_RULES: '<<parameters.extend-selected-rules>>'
+        PARAM_EXCLUDED_PATHS: '<<parameters.excluded_paths>>'
+        PARAM_EXIT_NON_ZERO_ON_FIX: '<<parameters.exit_non_zero_on_fix>>'
+        PARAM_EXIT_ZERO: '<<parameters.exit_zero>>'
+        PARAM_EXTEND_EXCLUDED_PATHS: '<<parameters.extend_excluded_paths>>'
+        PARAM_EXTEND_PER_FILE_IGNORES: '<<parameters.extend_per_file_ignores>>'
+        PARAM_EXTEND_SELECTED_RULES: '<<parameters.extend_selected_rules>>'
         PARAM_EXTENSIONS: '<<parameters.extensions>>'
-        PARAM_EXTRA_ARGS: '<<parameters.extra-args>>'
+        PARAM_EXTRA_ARGS: '<<parameters.extra_args>>'
         PARAM_FIX: '<<parameters.fix>>'
         PARAM_FIXABLE: '<<parameters.fixable>>'
-        PARAM_FIX_ONLY: '<<parameters.fix-only>>'
-        PARAM_FORCE_EXCLUDE: '<<parameters.force-exclude>>'
-        PARAM_IGNORED_RULES: '<<parameters.ignored-rules>>'
-        PARAM_IGNORE_NOQA: '<<parameters.ignore-noqa>>'
+        PARAM_FIX_ONLY: '<<parameters.fix_only>>'
+        PARAM_FORCE_EXCLUDE: '<<parameters.force_exclude>>'
+        PARAM_IGNORED_RULES: '<<parameters.ignored_rules>>'
+        PARAM_IGNORE_NOQA: '<<parameters.ignore_noqa>>'
         PARAM_ISOLATED: '<<parameters.isolated>>'
-        PARAM_LINE_LENGTH: '<<parameters.line-length>>'
-        PARAM_NO_CACHE: '<<parameters.no-cache>>'
-        PARAM_OUTPUT_FILE: '<<parameters.output-file>>'
-        PARAM_OUTPUT_FORMAT: '<<parameters.output-format>>'
-        PARAM_PER_FILE_IGNORES: '<<parameters.per-file-ignores>>'
+        PARAM_LINE_LENGTH: '<<parameters.line_length>>'
+        PARAM_NO_CACHE: '<<parameters.no_cache>>'
+        PARAM_OUTPUT_FILE: '<<parameters.output_file>>'
+        PARAM_OUTPUT_FORMAT: '<<parameters.output_format>>'
+        PARAM_PER_FILE_IGNORES: '<<parameters.per_file_ignores>>'
         PARAM_PREVIEW: '<<parameters.preview>>'
-        PARAM_RESPECT_GITIGNORE: '<<parameters.respect-gitignore>>'
-        PARAM_SELECTED_RULES: '<<parameters.selected-rules>>'
-        PARAM_SHOW_FIXES: '<<parameters.show-fixes>>'
+        PARAM_RESPECT_GITIGNORE: '<<parameters.respect_gitignore>>'
+        PARAM_SELECTED_RULES: '<<parameters.selected_rules>>'
+        PARAM_SHOW_FIXES: '<<parameters.show_fixes>>'
         PARAM_STATISTICS: '<<parameters.statistics>>'
         PARAM_TARGETS: '<<parameters.targets>>'
-        PARAM_TARGET_VERSION: '<<parameters.target-version>>'
+        PARAM_TARGET_VERSION: '<<parameters.target_version>>'
         PARAM_TEE: '<<parameters.tee>>'
         PARAM_UNFIXABLE: '<<parameters.unfixable>>'
         PARAM_VERBOSITY: '<<parameters.verbosity>>'

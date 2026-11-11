@@ -26,23 +26,23 @@ is_true() {
 # tests/arguments/packed-commands.py checks this order in the packed command.
 # ---------------------------------------------------------------------------
 
-# 'fix-only' asks Ruff to rewrite files and 'fix: never' forbids it. Refuse
+# 'fix_only' asks Ruff to rewrite files and 'fix: never' forbids it. Refuse
 # the combination instead of letting a job modify files it was told not to.
 if is_true "${PARAM_FIX_ONLY}" && [ "${PARAM_FIX}" = 'never' ]; then
   echo \
-    "'fix-only' rewrites files, so it needs 'fix' set to 'auto', 'safe' or 'unsafe'." \
+    "'fix_only' rewrites files, so it needs 'fix' set to 'auto', 'safe' or 'unsafe'." \
     >&2
   exit 1
 fi
 
-# Split extra-args on spaces, tabs and newlines, like targets and extensions
+# Split extra_args on spaces, tabs and newlines, like targets and extensions
 # below, so every line counts and empty lines vanish. Nothing is evaluated:
 # quotes, '$', '~' and glob characters stay literal, and an argument that
 # contains whitespace cannot be expressed.
 IFS=$' \t\n' read -r -d '' -a EXTRA_ARGS \
   < <(printf '%s\0' "${PARAM_EXTRA_ARGS}")
 
-# extra-args is passed through as it is, with two exceptions. Both are decided
+# extra_args is passed through as it is, with two exceptions. Both are decided
 # on the split items alone, by exact name or by the name followed by '=', so
 # '--fixable' is not mistaken for '--fix'. Short options, combined short
 # options and the values of other options are not interpreted.
@@ -73,7 +73,7 @@ done
 
 if [ "${#REJECTED[@]}" -ne 0 ]; then
   {
-    echo "'extra-args' contains items that are not accepted, so Ruff was not run:"
+    echo "'extra_args' contains items that are not accepted, so Ruff was not run:"
     printf '  %s\n' "${REJECTED[@]}"
   } >&2
   exit 1
@@ -284,7 +284,7 @@ if is_true "${PARAM_EXIT_ZERO}"; then
   RUFF_ARGS+=('--exit-zero')
 fi
 
-# extra-args was split and checked at the top of the script.
+# extra_args was split and checked at the top of the script.
 RUFF_ARGS+=("${EXTRA_ARGS[@]}")
 
 # targets holds paths and nothing else. It is split like extensions, and an
@@ -368,8 +368,8 @@ if [ "${STATUS}" -eq 0 ] && [ "${REPORT_STATUS}" -ne 0 ]; then
   exit 2
 fi
 
-# 'exit-zero' applies to reported violations only. Ruff exits 2 for a missing
+# 'exit_zero' applies to reported violations only. Ruff exits 2 for a missing
 # config file or a command line error, and that status is preserved here.
 # A path that does not exist is reported as a violation, so it exits 1 and IS
-# masked by 'exit-zero'.
+# masked by 'exit_zero'.
 exit "${STATUS}"

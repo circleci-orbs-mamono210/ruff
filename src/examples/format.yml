@@ -20,7 +20,7 @@ usage:
             targets: src tests
         - ruff/format:
             color: always
-            extend-excluded-paths: "*.md"
+            extend_excluded_paths: "*.md"
             mode: diff
             targets: src tests
   workflows:
