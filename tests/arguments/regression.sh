@@ -1,11 +1,14 @@
 #!/bin/bash
 # Regression cases for how src/scripts/check.sh and src/scripts/format.sh pass
-# 'targets' and 'extensions' to Ruff.
+# 'targets', 'extensions' and 'extra-args' to Ruff, and for the input they
+# refuse.
 #
-# Both scripts used to read only the first line of each parameter, so paths
-# and mappings on later lines were silently dropped. The paths also reached
-# Ruff without '--': a target named '--help' ran as an option, '-' made Ruff
-# read standard input and '@args' was expanded as an argument file.
+# Both scripts used to read only the first line of each parameter, so paths,
+# mappings and arguments on later lines were silently dropped. The paths also
+# reached Ruff without '--': a target named '--help' ran as an option, '-'
+# made Ruff read standard input and '@args' was expanded as an argument file.
+# 'fix: never' used to pass '--no-fix' alone, which 'fix-only = true' in a
+# configuration overrides, and 'extra-args' could add '--fix' to it.
 #
 # Usage, from anywhere inside the repository:
 #
@@ -19,12 +22,15 @@
 #
 # The argument cases put a copy of tests/arguments/record-ruff.sh first on
 # PATH and compare what it receives with the expected lists: the paths after
-# '--' and the value of every '--extension'. The 'Command:' line must show
-# exactly the arguments received. The Ruff cases run the real Ruff on files
-# named '-', '--help' and '@args', on extensions given on several lines and on
-# empty targets, and pin the exit status. Everything runs in a temporary
-# directory that is removed on exit, so nothing is written to tests/ or
-# reports/.
+# '--', the value of every '--extension' and the arguments that 'extra-args'
+# adds. The 'Command:' line must show exactly the arguments received. The
+# refusal cases use the same stand-in and require a non-zero status, no call
+# of Ruff at all, not even 'ruff --version', and an unchanged target and
+# report. The Ruff cases run the real Ruff on files named '-', '--help' and
+# '@args', on extensions given on several lines, on empty targets and on
+# configurations that ask for fixing or formatting, and pin the exit status.
+# Everything runs in a temporary directory that is removed on exit, so nothing
+# is written to tests/ or reports/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -85,6 +91,9 @@ CASE_NAME=''
 CASE_LOG=''
 CASE_STATUS=0
 ARGV=()
+BASELINE=''
+BASELINE_COUNT=0
+REFUSE_SNAPSHOT=''
 BEFORE=()
 AFTER=()
 SEPARATOR=''
@@ -100,13 +109,16 @@ if ! command -v ruff > /dev/null; then
   exit 1
 fi
 
-echo "Testing ${SCRIPT#"${ROOT}/"} with $(ruff --version) from $(command -v ruff)"
+RUFF_VERSION="$(ruff --version)"
+
+echo "Testing ${SCRIPT#"${ROOT}/"} with ${RUFF_VERSION} from $(command -v ruff)"
 
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "${SCRATCH}"' EXIT
 
 MOCK_BIN="${SCRATCH}/bin"
 ARGV_FILE="${SCRATCH}/argv"
+CALLS_FILE="${SCRATCH}/calls"
 STDIN_FILE="${SCRATCH}/stdin.py"
 LOG_DIR="${SCRATCH}/logs"
 WORK="${SCRATCH}/work"
@@ -156,6 +168,48 @@ mkdir -p "${EXIT_DIR}"
 printf '%s\n' "${CLEAN_SOURCE}" > "${EXIT_DIR}/clean.py"
 printf '%s\n' "${BAD_SOURCE}" > "${EXIT_DIR}/bad.py"
 printf '%s\n' "${BAD_SOURCE}" > "${EXIT_DIR}/rewrite.py"
+
+# A refused run must leave this directory exactly as it is.
+REFUSE_DIR="${WORK}/refuse"
+mkdir -p "${REFUSE_DIR}"
+printf '%s\n' "${BAD_SOURCE}" > "${REFUSE_DIR}/target.py"
+printf '%s\n' 'REPORT OF AN EARLIER RUN' > "${REFUSE_DIR}/report.txt"
+
+# One directory per way a configuration can reach Ruff: its own ruff.toml,
+# its own pyproject.toml, and 'config-overrides', which is given per case.
+# For check.sh the setting asks Ruff to apply fixes without reporting. For
+# format.sh it makes the formatter want to change code that is formatted
+# under the defaults.
+CONFIG_DIR="${WORK}/config"
+mkdir -p "${CONFIG_DIR}/ruff-toml" "${CONFIG_DIR}/pyproject" \
+  "${CONFIG_DIR}/overrides"
+
+if [ "${COMMAND}" = 'check' ]; then
+  CONFIG_SOURCE="${BAD_SOURCE}"
+  CONFIG_OVERRIDE='fix-only = true'
+  CONFIG_DIFF_LINE='-import os'
+  CONFIG_DIFF_PARAMETER='PARAM_DIFF=true'
+  # The backticks are part of Ruff's message.
+  # shellcheck disable=SC2016
+  CONFIG_REPORT_LINE='a.py:1:8: F401 [*] `os` imported but unused'
+  printf '%s\n' 'fix-only = true' > "${CONFIG_DIR}/ruff-toml/ruff.toml"
+  printf '%s\n' '[tool.ruff]' 'fix-only = true' \
+    > "${CONFIG_DIR}/pyproject/pyproject.toml"
+else
+  CONFIG_SOURCE='x = "a"'
+  CONFIG_OVERRIDE='format.quote-style = "single"'
+  CONFIG_DIFF_LINE="+x = 'a'"
+  CONFIG_DIFF_PARAMETER='PARAM_MODE=diff'
+  CONFIG_REPORT_LINE='a.py:1:5: unformatted: File would be reformatted'
+  printf '%s\n' '[format]' 'quote-style = "single"' \
+    > "${CONFIG_DIR}/ruff-toml/ruff.toml"
+  printf '%s\n' '[tool.ruff.format]' 'quote-style = "single"' \
+    > "${CONFIG_DIR}/pyproject/pyproject.toml"
+fi
+
+for route in ruff-toml pyproject overrides; do
+  printf '%s\n' "${CONFIG_SOURCE}" > "${CONFIG_DIR}/${route}/a.py"
+done
 
 fail() {
   echo "FAIL [${COMMAND} ${CASE_NAME}]: $*"
@@ -252,15 +306,17 @@ load_argv() {
 #
 # Runs a case with the stand-in first on PATH and loads what it received. The
 # stand-in exits 0, so the script must too, and the 'Command:' line must show
-# exactly the arguments the stand-in received.
+# exactly the arguments the stand-in received. The script must start Ruff
+# twice: 'ruff --version' first, then the command.
 run_mock() {
   local name="$1"
   shift
 
-  rm -f "${ARGV_FILE}"
+  rm -f "${ARGV_FILE}" "${CALLS_FILE}"
   run_case "${name}" "${MOCK_DIR}" \
     PATH="${MOCK_BIN}:${PATH}" \
     RECORD_RUFF_ARGV="${ARGV_FILE}" \
+    RECORD_RUFF_CALLS="${CALLS_FILE}" \
     "$@"
   expect_status 0
   load_argv
@@ -268,10 +324,106 @@ run_mock() {
   if [ "${#ARGV[@]}" -gt 0 ]; then
     expect_log_line "Command:$(printf ' %q' ruff "${ARGV[@]}")"
   fi
+
+  if [ ! -f "${CALLS_FILE}" ] ||
+    [ "$(wc -l < "${CALLS_FILE}")" -ne 2 ] ||
+    [ "$(head -n 1 "${CALLS_FILE}")" != 'ruff --version ' ]; then
+    fail "Ruff was not started as 'ruff --version' and then once more"
+  fi
+}
+
+# snapshot DIRECTORY prints the name and SHA-256 of every file below it.
+snapshot() {
+  (
+    cd "$1"
+    find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+  )
+}
+
+# expect_refuse_dir_unchanged compares REFUSE_DIR with the snapshot taken when
+# it was set up, so one case cannot hide a change that an earlier one made.
+expect_refuse_dir_unchanged() {
+  if [ "$(snapshot "${REFUSE_DIR}")" != "${REFUSE_SNAPSHOT}" ]; then
+    fail 'the target, the report or another file changed'
+  fi
+}
+
+# run_refused NAME VARIABLE=VALUE...
+#
+# Runs a case that the script must refuse, with the stand-in first on PATH.
+# The case passes only when the script exits 1, says that Ruff was not run,
+# prints no 'Command:' line, did not start the stand-in even for
+# 'ruff --version', and left the target, the existing report and the rest of
+# REFUSE_DIR exactly as they were. check.sh is also given the report as
+# 'output-file', so preparing it too early would empty it.
+run_refused() {
+  local name="$1"
+  local -a report=()
+  shift
+
+  if [ "${COMMAND}" = 'check' ]; then
+    report=(PARAM_OUTPUT_FILE='report.txt')
+  fi
+
+  rm -f "${ARGV_FILE}" "${CALLS_FILE}"
+  run_case "${name}" "${REFUSE_DIR}" \
+    PATH="${MOCK_BIN}:${PATH}" \
+    RECORD_RUFF_ARGV="${ARGV_FILE}" \
+    RECORD_RUFF_CALLS="${CALLS_FILE}" \
+    PARAM_TARGETS='target.py' \
+    "${report[@]}" \
+    "$@"
+  expect_status 1
+  expect_log_line "'extra-args' contains items that are not accepted, so Ruff was not run:"
+  expect_log_lacks 'Command:'
+
+  if [ -e "${CALLS_FILE}" ] || [ -e "${ARGV_FILE}" ]; then
+    fail "Ruff was started: $(tr "\n" ";" < "${CALLS_FILE}" 2> /dev/null || true)"
+  fi
+
+  expect_refuse_dir_unchanged
+}
+
+# expect_refused ITEM... asserts that the log names exactly these items as
+# refused, in this order.
+expect_refused() {
+  local expected actual
+
+  expected="$(printf "'%s'\\n" "$@")"
+  actual="$(sed -n "s/^  \\('[^']*'\\): .*/\\1/p" "${CASE_LOG}")"
+
+  if [ "${actual}" != "${expected}" ]; then
+    fail "expected the refused items $(describe "$@"), the log names: ${actual//$'\n'/ }"
+  fi
+}
+
+# expect_arguments ARGUMENT... asserts that exactly these arguments stand
+# between the subcommand and '--'.
+expect_arguments() {
+  local expected actual
+
+  expected="$(describe "$@")"
+  actual="$(describe "${BEFORE[@]}")"
+
+  if [ "${actual}" != "${expected}" ]; then
+    fail "expected the arguments ${expected}, got ${actual}"
+  fi
+}
+
+# expect_extra ARGUMENT... asserts that the arguments before '--' are those of
+# the run without extra-args, counted in BASELINE_COUNT and described in
+# BASELINE, followed by exactly these.
+expect_extra() {
+  if [ "${#BEFORE[@]}" -lt "${BASELINE_COUNT}" ] ||
+    [ "$(describe "${BEFORE[@]:0:BASELINE_COUNT}")" != "${BASELINE}" ] ||
+    [ "$(describe "${BEFORE[@]:BASELINE_COUNT}")" != "$(describe "$@")" ]; then
+    fail "expected ${BASELINE} followed by $(describe "$@"), got $(describe "${BEFORE[@]}")"
+  fi
 }
 
 # run_ruff NAME DIRECTORY VARIABLE=VALUE... runs a case with the real Ruff.
 # Concise output puts each finding on one line that starts with the file name.
+# The log must start with the version that 'ruff --version' prints.
 run_ruff() {
   local name="$1"
   local directory="$2"
@@ -281,6 +433,18 @@ run_ruff() {
 
   if ! grep -q '^Command:.* -- ' "${CASE_LOG}"; then
     fail "the 'Command:' line does not show '--'"
+  fi
+
+  # The version is still printed, and before the command line.
+  if [ "$(head -n 1 "${CASE_LOG}")" != "${RUFF_VERSION}" ]; then
+    fail "the log does not start with '${RUFF_VERSION}'"
+  fi
+}
+
+# expect_unchanged FILE CONTENT asserts that FILE still holds CONTENT.
+expect_unchanged() {
+  if [ "$(cat "$1")" != "$2" ]; then
+    fail "$1 was modified"
   fi
 }
 
@@ -349,6 +513,12 @@ expect_status() {
 expect_log_line() {
   if ! grep -Fxq -- "$1" "${CASE_LOG}"; then
     fail "the log has no line '$1'"
+  fi
+}
+
+expect_log_has() {
+  if ! grep -Fq -- "$1" "${CASE_LOG}"; then
+    fail "the log does not contain '$1'"
   fi
 }
 
@@ -468,6 +638,200 @@ expect_extensions pya:python pyb:python
 expect_paths src ./- tests
 
 # ---------------------------------------------------------------------------
+# extra-args, as received by the stand-in. The items are split like targets
+# and appended after the arguments the parameters produce. BASELINE holds
+# those arguments for the defaults: 'fix: never' passes both '--no-fix' and
+# '--no-fix-only', and the format mode 'check' passes '--check'.
+# ---------------------------------------------------------------------------
+
+run_mock extra-args-none PARAM_EXTRA_ARGS=''
+
+if [ "${COMMAND}" = 'check' ]; then
+  expect_arguments --no-fix --no-fix-only
+else
+  expect_arguments --check
+fi
+
+BASELINE="$(describe "${BEFORE[@]}")"
+BASELINE_COUNT="${#BEFORE[@]}"
+
+run_mock extra-args-blank PARAM_EXTRA_ARGS=$' \n\t\n'
+expect_extra
+
+run_mock extra-args-one-line PARAM_EXTRA_ARGS='--alpha --beta value'
+expect_extra --alpha --beta value
+
+run_mock extra-args-several-lines \
+  PARAM_EXTRA_ARGS=$'--alpha\n\n  --beta value\n\t--gamma\n'
+expect_extra --alpha --beta value --gamma
+expect_paths .
+
+# shellcheck disable=SC2016
+run_mock extra-args-not-evaluated \
+  PARAM_EXTRA_ARGS='--extend-exclude *.py "a b" $HOME $(id) ~ a\ b'
+# shellcheck disable=SC2016,SC2088,SC1003
+expect_extra --extend-exclude '*.py' '"a' 'b"' '$HOME' '$(id)' '~' 'a\' 'b'
+
+# Arguments outside the refused list arrive exactly as written. The script
+# does not take combined short options or 'NAME=VALUE' apart, and '--fixable'
+# is not '--fix'. This shows what is passed on, not what Ruff then does.
+run_mock extra-args-passed-through \
+  PARAM_EXTRA_ARGS='-ne --output-file=x -ox --fixable F401 --show-settings'
+expect_extra -ne --output-file=x -ox --fixable F401 --show-settings
+
+run_mock extra-args-near-the-refused-names \
+  PARAM_EXTRA_ARGS='--fixable --fix-onlyx --fixed --add-noqa-x --add-ignored --no-fix --no-fix-only --unsafe-fixes -fix --FIX fix --x=@y a@b --- --='
+expect_extra --fixable --fix-onlyx --fixed --add-noqa-x --add-ignored \
+  --no-fix --no-fix-only --unsafe-fixes -fix --FIX fix --x=@y a@b --- --=
+
+run_mock extra-args-with-targets \
+  PARAM_EXTRA_ARGS=$'--alpha\n--beta' \
+  PARAM_TARGETS=$'src\n-'
+expect_extra --alpha --beta
+expect_paths src ./-
+
+REWRITING='--fix --fix=1 --fix-only --fix-only=0 --add-noqa --add-noqa=why --add-ignore --add-ignore=why'
+
+if [ "${COMMAND}" = 'check' ]; then
+  # The other values of 'fix' keep their arguments, and there the options
+  # that rewrite files are passed on.
+  run_mock fix-auto PARAM_FIX='auto'
+  expect_arguments
+
+  run_mock fix-safe PARAM_FIX='safe'
+  expect_arguments --fix --no-unsafe-fixes
+
+  run_mock fix-unsafe PARAM_FIX='unsafe'
+  expect_arguments --fix --unsafe-fixes
+
+  run_mock fix-auto-extra-args-rewriting \
+    PARAM_FIX='auto' \
+    PARAM_EXTRA_ARGS="${REWRITING}"
+  expect_arguments --fix --fix=1 --fix-only --fix-only=0 --add-noqa \
+    --add-noqa=why --add-ignore --add-ignore=why
+
+  run_mock fix-safe-extra-args-rewriting \
+    PARAM_FIX='safe' \
+    PARAM_EXTRA_ARGS="${REWRITING}"
+  expect_arguments --fix --no-unsafe-fixes --fix --fix=1 --fix-only \
+    --fix-only=0 --add-noqa --add-noqa=why --add-ignore --add-ignore=why
+
+  run_mock fix-unsafe-extra-args-rewriting \
+    PARAM_FIX='unsafe' \
+    PARAM_EXTRA_ARGS="${REWRITING}"
+  expect_arguments --fix --unsafe-fixes --fix --fix=1 --fix-only \
+    --fix-only=0 --add-noqa --add-noqa=why --add-ignore --add-ignore=why
+else
+  # format.sh has no 'fix' parameter, so it does not refuse these names.
+  run_mock extra-args-rewriting-names PARAM_EXTRA_ARGS="${REWRITING}"
+  expect_extra --fix --fix=1 --fix-only --fix-only=0 --add-noqa \
+    --add-noqa=why --add-ignore --add-ignore=why
+fi
+
+# ---------------------------------------------------------------------------
+# extra-args that are refused. '--' and an item that starts with '@' are
+# refused whatever 'fix' or 'mode' says.
+# ---------------------------------------------------------------------------
+
+REFUSE_SNAPSHOT="$(snapshot "${REFUSE_DIR}")"
+
+if [ "${COMMAND}" = 'check' ]; then
+  VARIANT_NAME='PARAM_FIX'
+  VARIANTS=(never auto safe unsafe)
+else
+  VARIANT_NAME='PARAM_MODE'
+  VARIANTS=(check diff write)
+fi
+
+for variant in "${VARIANTS[@]}"; do
+  run_refused "refused-${variant}-separator" \
+    "${VARIANT_NAME}=${variant}" \
+    PARAM_EXTRA_ARGS='--'
+  expect_refused --
+
+  run_refused "refused-${variant}-argument-file" \
+    "${VARIANT_NAME}=${variant}" \
+    PARAM_EXTRA_ARGS='@args'
+  expect_refused @args
+
+  run_refused "refused-${variant}-at-alone" \
+    "${VARIANT_NAME}=${variant}" \
+    PARAM_EXTRA_ARGS='@'
+  expect_refused @
+done
+
+# The rule looks at each item on its own, so '@' is also refused where Ruff
+# would read the item as the value of an option.
+run_refused refused-at-as-a-value PARAM_EXTRA_ARGS='--config @settings.toml'
+expect_refused @settings.toml
+
+run_refused refused-on-a-later-line \
+  PARAM_EXTRA_ARGS=$'--alpha\n--beta value\n\n  @args\n--gamma'
+expect_refused @args
+
+run_refused refused-several-at-once \
+  PARAM_EXTRA_ARGS=$'--alpha @one\n--\n@two'
+expect_refused @one -- @two
+
+if [ "${COMMAND}" = 'check' ]; then
+  # Under 'fix: never' each option that rewrites files is refused, alone and
+  # as 'NAME=VALUE', whatever the value is.
+  REFUSED_INDEX=0
+
+  for item in --fix --fix=true --fix=false --fix= --fix-only \
+    --fix-only=true --fix-only=false --add-noqa --add-noqa=why \
+    --add-ignore --add-ignore=why; do
+    REFUSED_INDEX=$((REFUSED_INDEX + 1))
+    run_refused "refused-never-${REFUSED_INDEX}${item//=/-equals-}" \
+      PARAM_EXTRA_ARGS="${item}"
+    expect_refused "${item}"
+  done
+
+  run_refused refused-never-on-a-later-line \
+    PARAM_EXTRA_ARGS=$'--show-settings\n--extend-fixable F401\n--fix'
+  expect_refused --fix
+
+  run_refused refused-never-after-no-fix \
+    PARAM_EXTRA_ARGS='--no-fix --fix-only --no-fix-only'
+  expect_refused --fix-only
+
+  run_refused refused-never-all-at-once \
+    PARAM_EXTRA_ARGS=$'--fix --fix-only\n--add-noqa=x\n--add-ignore\n--\n@a'
+  expect_refused --fix --fix-only --add-noqa=x --add-ignore -- @a
+
+  # The dedicated parameter is still refused under 'fix: never', before Ruff
+  # is started.
+  rm -f "${ARGV_FILE}" "${CALLS_FILE}"
+  run_case refused-fix-only-parameter "${REFUSE_DIR}" \
+    PATH="${MOCK_BIN}:${PATH}" \
+    RECORD_RUFF_ARGV="${ARGV_FILE}" \
+    RECORD_RUFF_CALLS="${CALLS_FILE}" \
+    PARAM_FIX_ONLY='true' \
+    PARAM_OUTPUT_FILE='report.txt' \
+    PARAM_TARGETS='target.py'
+  expect_status 1
+  expect_log_line "'fix-only' rewrites files, so it needs 'fix' set to 'auto', 'safe' or 'unsafe'."
+
+  if [ -e "${CALLS_FILE}" ]; then
+    fail 'Ruff was started'
+  fi
+
+  expect_refuse_dir_unchanged
+
+  # The same refusal with the real Ruff on PATH: the file it could fix stays
+  # as it is, and not even the version is printed.
+  run_case refused-never-with-the-real-ruff "${REFUSE_DIR}" \
+    PARAM_EXTRA_ARGS='--fix' \
+    PARAM_OUTPUT_FILE='report.txt' \
+    PARAM_TARGETS='target.py'
+  expect_status 1
+  expect_refused --fix
+  expect_log_lacks "${RUFF_VERSION}"
+  expect_log_lacks 'Command:'
+  expect_refuse_dir_unchanged
+fi
+
+# ---------------------------------------------------------------------------
 # The real Ruff on files named '-', '--help' and '@args'. Each must be
 # reported under its own name. Reading standard input instead would report
 # nothing for '-' and exit 0, '--help' would print the usage and exit 0, and
@@ -525,6 +889,60 @@ expect_same_log "${DOT_LOG}"
 run_ruff ruff-targets-blank "${TREE_DIR}" PARAM_TARGETS=$' \t\n\n  '
 expect_status 1
 expect_same_log "${DOT_LOG}"
+
+# ---------------------------------------------------------------------------
+# The real Ruff with a configuration that asks for changes. For check.sh it
+# sets 'fix-only = true', which '--no-fix' alone does not stop, in ruff.toml,
+# in pyproject.toml and through 'config-overrides'. Under 'fix: never' the
+# file must stay as it is and the violation must be reported, and with 'diff'
+# the fix must be shown instead. For format.sh the configuration makes the
+# 'check' and 'diff' modes want a change, which they must report or show
+# without making it.
+# ---------------------------------------------------------------------------
+
+for route in ruff-toml pyproject overrides; do
+  ROUTE_OVERRIDES=''
+
+  if [ "${route}" = 'overrides' ]; then
+    ROUTE_OVERRIDES="${CONFIG_OVERRIDE}"
+  fi
+
+  run_ruff "ruff-config-${route}" "${CONFIG_DIR}/${route}" \
+    PARAM_CONFIG_OVERRIDES="${ROUTE_OVERRIDES}" \
+    PARAM_TARGETS='a.py'
+  expect_status 1
+  expect_log_line "${CONFIG_REPORT_LINE}"
+  expect_unchanged "${CONFIG_DIR}/${route}/a.py" "${CONFIG_SOURCE}"
+
+  run_ruff "ruff-config-${route}-diff" "${CONFIG_DIR}/${route}" \
+    PARAM_CONFIG_OVERRIDES="${ROUTE_OVERRIDES}" \
+    "${CONFIG_DIFF_PARAMETER}" \
+    PARAM_TARGETS='a.py'
+  expect_status 1
+  expect_log_line "${CONFIG_DIFF_LINE}"
+  expect_unchanged "${CONFIG_DIR}/${route}/a.py" "${CONFIG_SOURCE}"
+done
+
+if [ "${COMMAND}" = 'check' ]; then
+  # '--show-settings' is not refused and reaches Ruff, which prints the
+  # settings instead of checking.
+  run_ruff ruff-show-settings "${EXIT_DIR}" \
+    PARAM_EXTRA_ARGS='--show-settings' \
+    PARAM_TARGETS='bad.py'
+  expect_status 0
+  expect_log_has 'Resolved settings for: '
+else
+  # An invalid setting is a configuration error, 2, in both modes, which is
+  # not the 1 of a file that would be reformatted. Nothing is modified.
+  for mode in check diff; do
+    run_ruff "ruff-config-invalid-${mode}" "${CONFIG_DIR}/overrides" \
+      PARAM_CONFIG_OVERRIDES='format.quote-style = "no-such-style"' \
+      PARAM_MODE="${mode}" \
+      PARAM_TARGETS='a.py'
+    expect_status 2
+    expect_unchanged "${CONFIG_DIR}/overrides/a.py" "${CONFIG_SOURCE}"
+  done
+fi
 
 # ---------------------------------------------------------------------------
 # Exit status. The removed debug line came right before 'Command:', so pin the

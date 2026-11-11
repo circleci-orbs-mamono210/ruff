@@ -4,6 +4,7 @@ set -eo pipefail
 RUFF_ARGS=()
 EXTRA_ARGS=()
 EXTENSIONS=()
+REJECTED=()
 TARGET_WORDS=()
 TARGETS=()
 
@@ -18,8 +19,14 @@ is_true() {
   esac
 }
 
-# '--fix-only' implies '--fix' and wins over '--no-fix', so Ruff would rewrite
-# the checkout even though 'fix: never' asked for it to stay untouched. Refuse
+# ---------------------------------------------------------------------------
+# Input checks. Everything down to 'ruff --version' only reads the parameters:
+# Ruff is not started and no file is written until every check has passed, so
+# a refused run leaves the checkout and an existing report as they were.
+# tests/arguments/packed-commands.py checks this order in the packed command.
+# ---------------------------------------------------------------------------
+
+# 'fix-only' asks Ruff to rewrite files and 'fix: never' forbids it. Refuse
 # the combination instead of letting a job modify files it was told not to.
 if is_true "${PARAM_FIX_ONLY}" && [ "${PARAM_FIX}" = 'never' ]; then
   echo \
@@ -27,6 +34,53 @@ if is_true "${PARAM_FIX_ONLY}" && [ "${PARAM_FIX}" = 'never' ]; then
     >&2
   exit 1
 fi
+
+# Split extra-args on spaces, tabs and newlines, like targets and extensions
+# below, so every line counts and empty lines vanish. Nothing is evaluated:
+# quotes, '$', '~' and glob characters stay literal, and an argument that
+# contains whitespace cannot be expressed.
+IFS=$' \t\n' read -r -d '' -a EXTRA_ARGS \
+  < <(printf '%s\0' "${PARAM_EXTRA_ARGS}")
+
+# extra-args is passed through as it is, with two exceptions. Both are decided
+# on the split items alone, by exact name or by the name followed by '=', so
+# '--fixable' is not mistaken for '--fix'. Short options, combined short
+# options and the values of other options are not interpreted.
+#
+# - '--' and '@name' would change how the rest of the command line is read.
+#   The script puts '--' before the paths itself, and Ruff expands '@name' as
+#   an argument file wherever it appears.
+# - Under 'fix: never' the four options below would rewrite the checked files.
+#   'NAME=VALUE' is refused whatever the value is.
+for argument in "${EXTRA_ARGS[@]}"; do
+  case "${argument}" in
+    --)
+      REJECTED+=("'--': the paths come from 'targets', and '--' is added for them")
+      ;;
+    @*)
+      REJECTED+=("'${argument}': Ruff would read an item that starts with '@' as an argument file")
+      ;;
+    --fix | --fix=* | --fix-only | --fix-only=* | \
+      --add-noqa | --add-noqa=* | --add-ignore | --add-ignore=*)
+      if [ "${PARAM_FIX}" = 'never' ]; then
+        REJECTED+=("'${argument}': it rewrites files, which 'fix: never' forbids")
+      fi
+      ;;
+    *)
+      ;;
+  esac
+done
+
+if [ "${#REJECTED[@]}" -ne 0 ]; then
+  {
+    echo "'extra-args' contains items that are not accepted, so Ruff was not run:"
+    printf '  %s\n' "${REJECTED[@]}"
+  } >&2
+  exit 1
+fi
+
+# The checks have passed. Show which Ruff runs the command.
+ruff --version
 
 if is_true "${PARAM_ISOLATED}"; then
   RUFF_ARGS+=('--isolated')
@@ -133,7 +187,9 @@ done
 
 case "${PARAM_FIX}" in
   never)
-    RUFF_ARGS+=('--no-fix')
+    # '--no-fix' alone is not enough: 'fix-only = true' in a configuration
+    # file or in a '--config' override implies fixing and wins over it.
+    RUFF_ARGS+=('--no-fix' '--no-fix-only')
     ;;
   safe)
     RUFF_ARGS+=('--fix' '--no-unsafe-fixes')
@@ -228,12 +284,8 @@ if is_true "${PARAM_EXIT_ZERO}"; then
   RUFF_ARGS+=('--exit-zero')
 fi
 
-# Split extra-args on shell whitespace without evaluating shell syntax or
-# performing pathname expansion.
-if [ -n "${PARAM_EXTRA_ARGS}" ]; then
-  read -r -a EXTRA_ARGS <<< "${PARAM_EXTRA_ARGS}"
-  RUFF_ARGS+=("${EXTRA_ARGS[@]}")
-fi
+# extra-args was split and checked at the top of the script.
+RUFF_ARGS+=("${EXTRA_ARGS[@]}")
 
 # targets holds paths and nothing else. It is split like extensions, and an
 # empty or blank value means the working directory. The paths follow '--', so

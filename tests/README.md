@@ -88,8 +88,9 @@ and `tee`. It calls the script directly, because several cases must fail. The
   reports. See "Reports stored as artifacts" below.
 - `report/mock-ruff.sh` stands in for Ruff where a failure has to be injected,
   such as a report that cannot be read back. A temporary copy named `ruff` is
-  put first on `PATH`. It records every call, so a case can assert that Ruff
-  was not started.
+  put first on `PATH`. It records every call except `ruff --version`, which
+  `check.sh` runs once its input checks have passed, so a case can assert
+  that `ruff check` was not started.
 - The read-only report case is skipped when the script runs as root, because
   root can write to a read-only file. The CircleCI convenience images run as
   an ordinary user, so the case runs in CI.
@@ -157,29 +158,57 @@ an artifact or as skipped. Anything else is a mismatch.
 ## Argument regression
 
 `arguments/regression.sh` checks how `src/scripts/check.sh` and
-`src/scripts/format.sh` pass `targets` and `extensions` to Ruff.
-`parameter-tests` runs `bash tests/arguments/regression.sh check` with the
-defaults that `write-check-defaults` writes. `format-tests` runs
+`src/scripts/format.sh` pass `targets`, `extensions` and `extra-args` to Ruff,
+and what they refuse. `parameter-tests` runs
+`bash tests/arguments/regression.sh check` with the defaults that
+`write-check-defaults` writes. `format-tests` runs
 `bash tests/arguments/regression.sh format`, and the script carries the
 defaults of `src/commands/format.yml` for it, spelled out as in the other
 `format-tests` steps.
 
 - The argument cases put a temporary copy of `arguments/record-ruff.sh`,
-  named `ruff`, first on `PATH`. It writes the arguments it receives to a
-  file, separated by NUL characters, and exits 0. The cases compare the paths
-  after `--` and the value of every `--extension` with the expected lists, and
-  require the `Command:` line to show exactly the arguments received. They
-  cover one line, several lines, empty lines and indentation, tabs, empty and
-  blank values, glob characters, quotes, shell syntax, backslashes, and items
-  that start with `-` or `@`. The glob cases run next to files that the globs
-  would match.
+  named `ruff`, first on `PATH`. It appends every call to one file, answers
+  `ruff --version`, and writes the arguments of any other call to a second
+  file, separated by NUL characters. The cases compare the paths after `--`,
+  the value of every `--extension` and the arguments that `extra-args` adds
+  with the expected lists. They require the `Command:` line to show exactly
+  the arguments received, and Ruff to be started twice: `ruff --version`
+  first, then the command. They cover one line, several lines, empty lines
+  and indentation, tabs, empty and blank values, glob characters, quotes,
+  shell syntax, backslashes, and items that start with `-` or `@`. The glob
+  cases run next to files that the globs would match.
+- The same cases pin what `fix` passes: `--no-fix --no-fix-only` for `never`,
+  nothing for `auto`, `--fix --no-unsafe-fixes` for `safe` and
+  `--fix --unsafe-fixes` for `unsafe`. They also show that `extra-args`
+  outside the refused list arrive as written, for example `-ne`,
+  `--output-file=x`, `-ox`, `--fixable F401` and `--show-settings`. That
+  proves what is passed on, not what Ruff then does with it.
+- The refusal cases run the script as a child process with the same stand-in.
+  A case passes only when the script exits 1, names the refused items,
+  prints no `Command:` line, did not start the stand-in even for
+  `ruff --version`, and left its directory unchanged. That directory holds a
+  target and an existing report, which `check.sh` also gets as `output-file`.
+  An unexpected exit 0, a start of Ruff or a changed file fails the case. The
+  cases cover `--` and items starting with `@` for every value of `fix` and
+  every format mode, and under `fix: never` each of `--fix`, `--fix-only`,
+  `--add-noqa` and `--add-ignore`, alone, as `NAME=VALUE`, on a later line
+  and several at once. A refusal is never a failing step of the job itself.
 - The Ruff cases run Ruff 0.16.2 on files named `-`, `--help` and `@args`,
   with other code on standard input and a file named `args` for `@args` to
   expand. Each file must be reported under its own name. They also run
   `extensions` given on several lines with an empty `targets`, compare an
   empty and a blank `targets` with `.`, and pin the exit status: 0, 1 and 2
   for both scripts, `exit-zero` for `check.sh`, and the `diff` and `write`
-  modes for `format.sh`.
+  modes for `format.sh`. Every log must start with the Ruff version.
+- The configuration cases use a configuration that asks for changes, given
+  in `ruff.toml`, in `pyproject.toml` and through `config-overrides`. For
+  `check.sh` it is `fix-only = true`: under `fix: never` the file must stay
+  as it is and `F401` must be reported with exit 1, and with `diff` the fix
+  must be printed with exit 1. For `format.sh` it is
+  `format.quote-style = "single"`: `check` must report the file and `diff`
+  must print the change, both with exit 1 and without changing the file. An
+  invalid setting must exit 2. `--show-settings` must reach Ruff and print
+  the settings.
 - No case may print a line that starts with `PARAM_`, like the debug output
   both scripts used to have.
 - Everything runs in a temporary directory with an empty `ruff.toml`, which
@@ -188,11 +217,43 @@ defaults of `src/commands/format.yml` for it, spelled out as in the other
   `parameter-tests` are unaffected, and no Ruff configuration outside that
   directory applies.
 
-The cases compare only what `targets` and `extensions` decide, not the whole
-argument list, so a change to an unrelated flag does not break them. Reading
-only the first line again, dropping `--` from the Ruff call, or no longer
-adding `./` each makes cases fail for both scripts.
+The cases compare only what `targets`, `extensions`, `extra-args` and `fix`
+decide, not the whole argument list, so a change to an unrelated flag does not
+break them. Reading only the first line again, dropping `--` from the Ruff
+call, no longer adding `./`, dropping `--no-fix-only`, or accepting a refused
+item each makes cases fail.
 
 To run the cases outside CircleCI, install Ruff 0.16.2, write the defaults for
 the `check` cases as described in "Report regression", and run the two
 commands above.
+
+## Packed commands
+
+The cases above run the scripts in `src/scripts` directly. The
+`packed-command-tests` job ties them to the published commands. It attaches
+the workspace of `orb-tools/pack`, which holds the orb packed from the same
+commit, and runs `arguments/packed-commands.py` on it. For `check` and
+`format` the script requires that:
+
+- the command is a single `run` step without `when`, `shell`, `background` or
+  `working_directory`, so no step starts Ruff earlier and none runs after a
+  refusal;
+- the step's command is the file in `src/scripts`, apart from trailing
+  whitespace and the `\<<` that `circleci orb pack` writes for every `<<` of
+  an included script, so nothing wraps the script or hides its exit status;
+- every parameter is handed over as `PARAM_<NAME>`, and the script reads no
+  `PARAM_` variable that is not set;
+- in the script, each refusal reaches its `exit 1` before the first line that
+  starts Ruff, that line is `ruff --version`, and no earlier line writes a
+  file.
+
+It prints the SHA-256 of the packed orb and of each script. The script needs
+PyYAML, which the job installs. To run it elsewhere:
+
+```console
+circleci orb pack src > /tmp/orb.yml
+python tests/arguments/packed-commands.py /tmp/orb.yml
+```
+
+`packed-commands.py` lies below `tests/`, which one `ruff/check` step of
+`parameter-tests` lints with the default rule set. Keep it free of violations.

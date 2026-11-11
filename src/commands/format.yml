@@ -3,7 +3,7 @@ description: >
   Execute 'ruff format', the Ruff formatter.
 
   The default mode is 'check', which reports the files that would be
-  reformatted and leaves the checkout untouched.
+  reformatted instead of rewriting them.
 parameters:
   cache-dir:
     default: ''
@@ -68,10 +68,18 @@ parameters:
   extra-args:
     default: ''
     description: >
-      Whitespace separated list of extra arguments appended to the
-      'ruff format' invocation, for options this command does not expose.
-      Each item becomes a separate argument. Shell quoting is not
-      reinterpreted and pathname expansion is not performed.
+      Extra arguments appended to the 'ruff format' invocation, for options
+      this command does not expose. Separate them with spaces, tabs or
+      newlines; empty lines are ignored. Nothing is evaluated, so quotes, '$', '~' and glob
+      characters are passed as they are, and an argument that contains
+      whitespace cannot be given.
+
+      In every mode, '--' and any item that starts with '@' are refused
+      before Ruff is started, because they change how the rest of the
+      command line is read. The step then exits 1 without touching a file.
+      Everything else is passed to Ruff as written. That it is accepted says
+      nothing about what it does: Ruff decides how it combines with the
+      other parameters.
     type: string
   force-exclude:
     default: auto
@@ -105,11 +113,16 @@ parameters:
       What the formatter does with the files.
 
       'check' passes '--check', reports which files would be reformatted and
-      fails the step if there are any, leaving the checkout untouched. This
-      is the mode a CI gate wants.
+      fails the step if there are any. This is the mode a CI gate wants.
 
       'diff' passes '--diff' and additionally prints the exact changes, which
       makes a failure actionable from the log alone.
+
+      Neither of the two rewrites the files it is given. This is verified
+      with Ruff 0.16.2 for runs set up through the parameters of this
+      command, including settings from a config file or 'config-overrides'.
+      It does not cover 'extra-args' or other Ruff versions, and the cache
+      is still written.
 
       'write' passes neither and REWRITES the files in place, which only
       makes sense when the job goes on to commit or otherwise use the result.
@@ -185,9 +198,9 @@ parameters:
     enum: ["default", "verbose", "quiet", "silent"]
     type: enum
 steps:
-  - run:
-      name: Show Ruff version
-      command: <<include(scripts/show-version.sh)>>
+  # One step on purpose. The script checks its input first, then prints
+  # 'ruff --version' and only then runs Ruff, so a refused input starts
+  # nothing. A separate version step would start Ruff before the check.
   - run:
       name: Execute ruff format
       environment:

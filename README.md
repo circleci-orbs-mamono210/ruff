@@ -49,7 +49,7 @@ workflows:
 
 By default, `ruff/check` checks the current working directory recursively and the job fails when any violation is reported.
 
-Before running the checks, both `ruff/check` and `ruff/format` print the installed Ruff version using `ruff --version`.
+Both `ruff/check` and `ruff/format` first check their input, then print the installed Ruff version using `ruff --version`, and then run Ruff, all in one step. A step whose input is refused does not start Ruff at all; see [Extra Arguments](#extra-arguments).
 
 ## Pin the Version
 
@@ -139,7 +139,7 @@ The list form used in a config file, `"tests/*" = ["S101", "F401"]`, is not acce
 
 ## Formatting
 
-`ruff/format` runs the formatter. The default mode is `check`, which reports the files that would be reformatted and leaves the checkout untouched, so it is safe to use as a CI gate.
+`ruff/format` runs the formatter. The default mode is `check`, which passes `--check`: Ruff reports the files that would be reformatted and fails the step instead of rewriting them, which is what a CI gate wants.
 
 ```yaml
 - ruff/format:
@@ -155,6 +155,8 @@ The list form used in a config file, `"tests/*" = ["S101", "F401"]`, is not acce
 | `write` | **Rewrites the files in place**; only useful when the job goes on to commit the result |
 
 > Since Ruff 0.16.0 the formatter also reformats Python code blocks inside Markdown files, so `targets: .` reaches every `.md` file in the repository. Add `*.md` to `extend-excluded-paths` when that is not wanted.
+
+Neither `check` nor `diff` rewrites the files it is given. This is verified with Ruff 0.16.2 for runs set up through the Orb's own parameters, including settings that come from a configuration file or from `config-overrides`. It does not cover `extra-args` or other Ruff versions, and Ruff's cache is still written.
 
 `line-length` is a first-class formatter flag here. Keep it in step with the `line-length` given to `ruff/check`, because the two commands configure it independently.
 
@@ -254,23 +256,71 @@ Ruff also honours `.gitignore` and other standard ignore files by default, which
 
 ## Fixing
 
-`ruff/check` defaults to `fix: never`, which passes `--no-fix` and keeps the checkout untouched **even when a configuration file sets `fix = true`**. This is the behaviour a CI gate wants.
+`ruff/check` defaults to `fix: never`, which passes both `--no-fix` and `--no-fix-only`. With the two flags the linter applies no fixes **even when the configuration sets `fix = true` or `fix-only = true`**, whether in `ruff.toml`, in `pyproject.toml` or through `config-overrides`. `--no-fix` alone is not enough, because `fix-only = true` implies fixing and wins over it. This is the behaviour a CI gate wants.
+
+What that statement covers:
+
+* It is verified with Ruff 0.16.2, for runs set up through the Orb's own parameters.
+* `extra-args` can ask Ruff for almost anything. Under `fix: never` the Orb refuses the items listed in [Extra Arguments](#extra-arguments); other extra arguments are passed on as written and are not covered.
+* Other Ruff versions are not covered.
+* It is about fixes to the checked files. The report in `output-file` and Ruff's cache are still written.
 
 | Value | Behaviour |
 | ----- | --------- |
-| `never` | Passes `--no-fix`; the checkout is never modified |
+| `never` | Passes `--no-fix --no-fix-only`; the linter applies no fixes, within the scope described above |
 | `auto` | Passes nothing; the configuration file decides |
 | `safe` | Passes `--fix --no-unsafe-fixes` |
 | `unsafe` | Passes `--fix --unsafe-fixes`; may not preserve the original intent of the code |
 
-To show what fixing *would* change without touching anything, use `diff` instead:
+To see what fixing *would* change, use `diff`. Ruff then prints the fixes instead of applying them, also under `fix: never`:
 
 ```yaml
 - ruff/check:
     diff: true
 ```
 
-`fix-only: true` implies `--fix` and overrides `--no-fix`, which means it would rewrite the checkout despite `fix: never`. The Orb refuses that combination rather than modifying files a job was told to leave alone; set `fix` explicitly when a fixing run is intended.
+`fix-only: true` asks Ruff to rewrite files, which `fix: never` forbids. The Orb refuses that combination before Ruff is started rather than modifying files a job was told to leave alone; set `fix` explicitly when a fixing run is intended.
+
+## Extra Arguments
+
+`extra-args` appends options that the Orb does not expose as parameters. Separate the items with spaces, tabs or newlines; empty lines are ignored:
+
+```yaml
+- ruff/check:
+    extra-args: |
+      --extend-fixable F401
+      --no-show-fixes
+```
+
+For example, `--show-settings` makes Ruff print the settings it resolved instead of checking:
+
+```yaml
+- ruff/check:
+    extra-args: --show-settings
+    targets: src/app.py
+```
+
+Nothing is evaluated: quotes, backslashes, `$`, `~` and glob characters reach Ruff as they are, so an argument that contains whitespace cannot be given.
+
+The items are passed to Ruff as written, with these exceptions:
+
+| Command | Refused item | Reason |
+| ------- | ------------ | ------ |
+| `ruff/check` and `ruff/format`, always | `--` | The Orb puts `--` before the paths from `targets` itself |
+| `ruff/check` and `ruff/format`, always | Any item that starts with `@` | Ruff expands it as an argument file |
+| `ruff/check` with `fix: never` | `--fix`, `--fix-only`, `--add-noqa`, `--add-ignore`, and each of them followed by `=` and a value | They rewrite the checked files |
+
+When an item is refused, the step exits 1 and names the item. This happens before Ruff is started, even for `ruff --version`, and before `output-file` is prepared, so no file is touched.
+
+The rule looks at each item on its own, by its exact text:
+
+* `--fixable` is not `--fix`, and `--fix=false` is refused like `--fix=true`.
+* Combined short options such as `-ne`, and `NAME=VALUE` forms such as `--output-file=x`, are not taken apart or interpreted.
+* An item that starts with `@` is refused even where Ruff would read it as the value of another option.
+
+Being accepted is not a guarantee. An extra argument can still override a parameter, skip checks, change the exit status or send output elsewhere; Ruff decides how the arguments combine, and the Orb does not try to rule that out.
+
+Version 0.0.1 read `extra-args` only up to the first newline and passed every item on. Under `fix: never` it also passed `--no-fix` alone, so `fix-only = true` in a configuration, or `--fix` in `extra-args`, made the linter rewrite files.
 
 ## Saving the Report as an Artifact
 
@@ -338,6 +388,8 @@ The Orb never changes a non-zero status from Ruff, so printing the report cannot
 | 1 | Violations reported |
 | 2 | Configuration error or command-line usage error |
 
+A step also exits 1, before Ruff is started, when the Orb refuses its input: an item in `extra-args` that is [not accepted](#extra-arguments), or `fix-only: true` together with `fix: never`.
+
 `exit-zero` applies to reported violations only, so a broken configuration keeps failing the step. Note that a path which does not exist is reported as a violation and exits 1, so `exit-zero` **does** mask it. A reporting step that uses `exit-zero` should therefore always be paired with a gating step that does not.
 
 With `output-file`, `ruff/check` also exits 2 when the file cannot be prepared, in which case Ruff is not run, and when Ruff exited 0 but `tee` cannot read the report back. A non-zero status from Ruff is always passed through unchanged. See [Report handling and exit status](#report-handling-and-exit-status).
@@ -376,8 +428,8 @@ Runs `ruff check` against the selected source files or directories.
 | `extend-per-file-ignores`  | string  | `""`      | Comma-separated `pattern:rule` pairs, added to the configured ones          |
 | `extend-selected-rules`    | string  | `""`      | Rule codes added to the current selection                                  |
 | `extensions`               | string  | `""`      | `extension:language` mappings separated by spaces, tabs or newlines, each passed as `--extension` |
-| `extra-args`               | string  | `""`      | Whitespace-separated additional arguments; shell quoting and glob expansion are not evaluated |
-| `fix`                      | enum    | `never`   | Whether Ruff may rewrite files: `never`, `auto`, `safe` or `unsafe`        |
+| `extra-args`               | string  | `""`      | Additional arguments separated by spaces, tabs or newlines; some items are refused, see [Extra Arguments](#extra-arguments) |
+| `fix`                      | enum    | `never`   | Whether Ruff may rewrite files: `never`, `auto`, `safe` or `unsafe`; see [Fixing](#fixing) |
 | `fix-only`                 | boolean | `false`   | Apply fixes without reporting the remaining violations                     |
 | `fixable`                  | string  | `""`      | Rule codes that may be fixed                                              |
 | `force-exclude`            | enum    | `auto`    | Apply exclusions to paths named on the command line                        |
@@ -416,7 +468,7 @@ Runs `ruff format` against the selected source files or directories.
 | `exit-non-zero-on-format`  | boolean | `false`   | Fail the step when any file was reformatted                     |
 | `extend-excluded-paths`    | string  | `""`      | Comma-separated exclusion globs, added to the built-in list     |
 | `extensions`               | string  | `""`      | `extension:language` mappings separated by spaces, tabs or newlines, each passed as `--extension` |
-| `extra-args`               | string  | `""`      | Whitespace-separated additional arguments                       |
+| `extra-args`               | string  | `""`      | Additional arguments separated by spaces, tabs or newlines; `--` and items starting with `@` are refused, see [Extra Arguments](#extra-arguments) |
 | `force-exclude`            | enum    | `auto`    | Apply exclusions to paths named on the command line             |
 | `isolated`                 | boolean | `false`   | Ignore every configuration file                                 |
 | `line-length`              | string  | `""`      | Maximum line length the formatter wraps to                      |

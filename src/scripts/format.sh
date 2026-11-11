@@ -4,6 +4,7 @@ set -eo pipefail
 RUFF_ARGS=()
 EXTRA_ARGS=()
 EXTENSIONS=()
+REJECTED=()
 TARGET_WORDS=()
 TARGETS=()
 
@@ -17,6 +18,13 @@ is_true() {
       ;;
   esac
 }
+
+# ---------------------------------------------------------------------------
+# Input checks. Everything down to 'ruff --version' only reads the parameters:
+# Ruff is not started and no file is written until every check has passed, so
+# a refused run leaves the checkout as it was.
+# tests/arguments/packed-commands.py checks this order in the packed command.
+# ---------------------------------------------------------------------------
 
 case "${PARAM_MODE}" in
   check)
@@ -32,6 +40,43 @@ case "${PARAM_MODE}" in
     exit 1
     ;;
 esac
+
+# Split extra-args on spaces, tabs and newlines, like targets and extensions
+# below, so every line counts and empty lines vanish. Nothing is evaluated:
+# quotes, '$', '~' and glob characters stay literal, and an argument that
+# contains whitespace cannot be expressed.
+IFS=$' \t\n' read -r -d '' -a EXTRA_ARGS \
+  < <(printf '%s\0' "${PARAM_EXTRA_ARGS}")
+
+# extra-args is passed through as it is, with one exception that applies in
+# every mode: '--' and '@name' would change how the rest of the command line
+# is read. The script puts '--' before the paths itself, and Ruff expands
+# '@name' as an argument file wherever it appears. The check looks at the
+# split items alone; short options and the values of other options are not
+# interpreted.
+for argument in "${EXTRA_ARGS[@]}"; do
+  case "${argument}" in
+    --)
+      REJECTED+=("'--': the paths come from 'targets', and '--' is added for them")
+      ;;
+    @*)
+      REJECTED+=("'${argument}': Ruff would read an item that starts with '@' as an argument file")
+      ;;
+    *)
+      ;;
+  esac
+done
+
+if [ "${#REJECTED[@]}" -ne 0 ]; then
+  {
+    echo "'extra-args' contains items that are not accepted, so Ruff was not run:"
+    printf '  %s\n' "${REJECTED[@]}"
+  } >&2
+  exit 1
+fi
+
+# The checks have passed. Show which Ruff runs the command.
+ruff --version
 
 if is_true "${PARAM_ISOLATED}"; then
   RUFF_ARGS+=('--isolated')
@@ -151,12 +196,8 @@ if is_true "${PARAM_EXIT_NON_ZERO_ON_FORMAT}"; then
   RUFF_ARGS+=('--exit-non-zero-on-format')
 fi
 
-# Split extra-args on shell whitespace without evaluating shell syntax or
-# performing pathname expansion.
-if [ -n "${PARAM_EXTRA_ARGS}" ]; then
-  read -r -a EXTRA_ARGS <<< "${PARAM_EXTRA_ARGS}"
-  RUFF_ARGS+=("${EXTRA_ARGS[@]}")
-fi
+# extra-args was split and checked at the top of the script.
+RUFF_ARGS+=("${EXTRA_ARGS[@]}")
 
 # targets holds paths and nothing else. It is split like extensions, and an
 # empty or blank value means the working directory. The paths follow '--', so

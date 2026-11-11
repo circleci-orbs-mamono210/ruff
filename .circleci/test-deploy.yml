@@ -245,6 +245,21 @@ jobs:
           extra-args: --extend-fixable F401 --no-show-fixes
           targets: tests/clean
 
+      # extra-args that are not refused still run through the published
+      # command, one per line, and the step prints the Ruff version first.
+      # '--show-settings' makes Ruff print its settings instead of checking.
+      # What reaches Ruff for these and what is refused is asserted by
+      # tests/arguments/regression.sh below.
+      - ruff/check:
+          extra-args: |
+            --extend-fixable F401
+            --no-show-fixes
+          targets: tests/clean
+
+      - ruff/check:
+          extra-args: --show-settings
+          targets: tests/clean/compliant.py
+
       # Ruff exits 2 on a configuration or command line error without
       # touching output-file, so an earlier run's report must not be printed
       # or kept as this run's result. The script seeds each report with a
@@ -579,14 +594,24 @@ jobs:
 
             echo 'Globs were preserved as literal Ruff arguments.'
 
-      # targets and extensions are split on spaces, tabs and newlines, and the
-      # paths follow '--', with './' in front of a relative path that starts
-      # with '-' or '@'. The script compares what a recording stand-in for
-      # Ruff receives with the expected lists, then runs Ruff 0.16.2 on files
-      # named '-', '--help' and '@args'. It works in a temporary directory, so
-      # it adds nothing to reports/.
+      # targets, extensions and extra-args are split on spaces, tabs and
+      # newlines, and the paths follow '--', with './' in front of a relative
+      # path that starts with '-' or '@'. The script compares what a recording
+      # stand-in for Ruff receives with the expected lists, then runs Ruff
+      # 0.16.2 on files named '-', '--help' and '@args'.
+      #
+      # It also covers what check.sh refuses. Each refused extra-args item
+      # runs check.sh as a child process, and the case passes only when that
+      # process exits 1, the stand-in was not started even for
+      # 'ruff --version', and the target and an existing report are unchanged.
+      # A refusal is therefore never a failing step of this job. With the
+      # real Ruff it checks that 'fix: never' leaves a file alone when
+      # ruff.toml, pyproject.toml or config-overrides set 'fix-only = true'.
+      # packed-command-tests checks that the published command runs this
+      # same check.sh. Everything happens in a temporary directory, so
+      # nothing is added to reports/.
       - run:
-          name: Verify targets and extensions reach Ruff as paths and mappings
+          name: Verify the arguments passed to Ruff and the refused input
           command: bash tests/arguments/regression.sh check
 
       # store_artifacts below stores every report this job writes, so it has
@@ -1022,10 +1047,21 @@ jobs:
           line-length: "40"
           targets: tests/line-length/formatted_at_40.py
 
-      # The same argument cases as in parameter-tests, against format.sh. They
-      # work in a temporary directory, so the fixtures stay untouched.
+      # extra-args that are not refused still run through the published
+      # command, and the step prints the Ruff version first.
+      - ruff/format:
+          extra-args: |
+            --no-force-exclude
+            --no-preview
+          targets: tests/clean
+
+      # The same argument and refusal cases as in parameter-tests, against
+      # format.sh. With the real Ruff they also check that the 'check' and
+      # 'diff' modes leave a file alone when ruff.toml, pyproject.toml or
+      # config-overrides make the formatter want to change it. They work in a
+      # temporary directory, so the fixtures stay untouched.
       - run:
-          name: Verify targets and extensions reach Ruff as paths and mappings
+          name: Verify the arguments passed to Ruff and the refused input
           command: bash tests/arguments/regression.sh format
 
       # Every test above restores what it changes. Comparing with the
@@ -1044,6 +1080,56 @@ jobs:
             diff -u /tmp/fixtures-before.sha256 /tmp/fixtures-after.sha256
 
             echo 'Every fixture matches the checkout.'
+
+  # tests/arguments/regression.sh runs src/scripts/check.sh and format.sh
+  # directly. This job ties those results to the published commands: it
+  # takes the orb that orb-tools/pack packed from this commit and checks
+  # that 'check' and 'format' each consist of one step, that the step runs
+  # exactly the script the tests ran, that every parameter is handed to it,
+  # and that the script refuses input before it starts Ruff, including
+  # 'ruff --version', or writes a file.
+  packed-command-tests:
+    docker:
+      - image: cimg/python:3.13
+    steps:
+      - checkout
+
+      - attach_workspace:
+          at: dist
+
+      # orb-tools/pack persists the packed orb to the workspace. Depending on
+      # the orb-tools version it arrives as orb.yml or inside
+      # orb_source.tar.gz, so accept both and fail when neither is there.
+      - run:
+          name: Locate the packed orb
+          command: |
+            set -euo pipefail
+
+            while IFS= read -r archive; do
+              tar -xzf "${archive}" -C "$(dirname "${archive}")"
+            done < <(find dist -type f -name 'orb_source.tar.gz')
+
+            echo 'Files from the workspace:'
+            find dist -type f -print
+
+            packed="$(find dist -type f -name 'orb.yml' | LC_ALL=C sort | head -n 1)"
+
+            if [ -z "${packed}" ] || [ ! -s "${packed}" ]; then
+              echo 'The workspace holds no packed orb.yml'
+              exit 1
+            fi
+
+            cp "${packed}" /tmp/packed-orb.yml
+            echo "Commit: ${CIRCLE_SHA1:-unknown}"
+            sha256sum /tmp/packed-orb.yml
+
+      - run:
+          name: Install PyYAML
+          command: python -m pip install --quiet pyyaml==6.0.3
+
+      - run:
+          name: Verify the packed commands check their input before Ruff starts
+          command: python tests/arguments/packed-commands.py /tmp/packed-orb.yml
 
   install-tests:
     docker:
@@ -1101,6 +1187,11 @@ workflows:
       - orb-tools/pack:
           filters: *filters
 
+      - packed-command-tests:
+          requires:
+            - orb-tools/pack
+          filters: *filters
+
       - orb-tools/publish:
           orb-name: orbss/ruff
           vcs-type: << pipeline.project.type >>
@@ -1110,6 +1201,7 @@ workflows:
             - command-tests
             - format-tests
             - install-tests
+            - packed-command-tests
             - parameter-tests
             - resource-class-test
           context: CIRCLECI_ORBS

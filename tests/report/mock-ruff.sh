@@ -3,12 +3,19 @@
 # named 'ruff' first on PATH to produce situations that the real Ruff cannot
 # be asked for, such as a report that disappears after a successful run.
 #
-# Each call appends its command line to the file named by MOCK_RUFF_CALLS, so
-# a test can tell whether Ruff was started at all. MOCK_RUFF_ACTION decides
+# check.sh prints 'ruff --version' once its input checks have passed. That
+# call is answered with a version line and is not recorded. Every other call
+# appends its command line to the file named by MOCK_RUFF_CALLS, so a test can
+# tell whether 'ruff check' was started at all. MOCK_RUFF_ACTION decides
 # what happens to the '--output-file' path: 'keep' leaves it alone, 'remove'
 # deletes it and 'directory' replaces it with a directory, which cannot be
 # read as a file. The mock then exits with MOCK_RUFF_STATUS.
 set -euo pipefail
+
+if [ "$#" -eq 1 ] && [ "$1" = '--version' ]; then
+  echo 'ruff 0.0.0 (tests/report/mock-ruff.sh)'
+  exit 0
+fi
 
 output_file=''
 previous=''

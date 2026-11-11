@@ -43,8 +43,8 @@ parameters:
     description: >
       Print the diff each fix would produce instead of applying it
       (ruff '--diff'). Implies '--fix-only', so no violation report is
-      printed, and the step fails when any diff exists. Useful for showing
-      what 'fix' would change without modifying the checkout.
+      printed, and the step fails when any diff exists. Use it to show what
+      'fix' would change.
     type: boolean
   excluded-paths:
     default: ''
@@ -107,19 +107,33 @@ parameters:
   extra-args:
     default: ''
     description: >
-      Whitespace separated list of extra arguments appended to the
-      'ruff check' invocation, for options this command does not expose, for
-      example '--extend-fixable F401' or '--show-settings'. Each item becomes
-      a separate argument. Shell quoting is not reinterpreted and pathname
-      expansion is not performed, so an argument that needs embedded
-      whitespace should use a dedicated parameter where one is available.
+      Extra arguments appended to the 'ruff check' invocation, for options
+      this command does not expose, for example '--extend-fixable F401' or
+      '--show-settings'. Separate them with spaces, tabs or newlines; empty
+      lines are ignored. Nothing is evaluated, so quotes, '$', '~' and glob
+      characters are passed as they are, and an argument that contains
+      whitespace cannot be given.
+
+      A few items are refused before Ruff is started, and the step then
+      exits 1 without touching a file. '--' and any item that starts with
+      '@' are always refused, because they change how the rest of the
+      command line is read. Under 'fix: never', '--fix', '--fix-only',
+      '--add-noqa' and '--add-ignore' are refused as well, each also in its
+      'NAME=VALUE' form. Everything else is passed to Ruff as written. That
+      it is accepted says nothing about what it does: Ruff decides how it
+      combines with the other parameters.
     type: string
   fix:
     default: never
     description: >
-      Whether Ruff may rewrite the checked files. 'never' passes
-      '--no-fix', which keeps the checkout untouched even when a config file
-      sets 'fix = true'. 'auto' passes nothing, so the config file decides.
+      Whether Ruff may rewrite the checked files. 'never' passes '--no-fix'
+      and '--no-fix-only', so the linter applies no fixes even when a config
+      file or 'config-overrides' sets 'fix = true' or 'fix-only = true'.
+      This is verified with Ruff 0.16.2 for runs set up through the
+      parameters of this command. It does not cover 'extra-args' beyond the
+      items refused there, or other Ruff versions, and the report and the
+      cache are still written. 'auto' passes nothing, so the config file
+      decides.
       'safe' passes '--fix --no-unsafe-fixes'. 'unsafe' passes
       '--fix --unsafe-fixes', which applies fixes that may not preserve the
       original intent of the code. A fixing run only makes sense when the
@@ -131,11 +145,10 @@ parameters:
     default: false
     description: >
       Apply fixes but do not report on, or exit non-zero for, the violations
-      that remain (ruff '--fix-only'). Ruff's '--fix-only' implies '--fix'
-      and wins over '--no-fix'. Because that would rewrite the checkout
-      despite 'fix: never', this command REFUSES the combination rather than
-      silently overriding it; set 'fix' to 'auto', 'safe' or 'unsafe' when a
-      fixing run is intended.
+      that remain (ruff '--fix-only'). It asks Ruff to rewrite files, which
+      'fix: never' forbids, so this command REFUSES the combination before
+      Ruff is started rather than letting one override the other; set 'fix'
+      to 'auto', 'safe' or 'unsafe' when a fixing run is intended.
     type: boolean
   fixable:
     default: ''
@@ -316,9 +329,9 @@ parameters:
     enum: ["default", "verbose", "quiet", "silent"]
     type: enum
 steps:
-  - run:
-      name: Show Ruff version
-      command: <<include(scripts/show-version.sh)>>
+  # One step on purpose. The script checks its input first, then prints
+  # 'ruff --version' and only then runs Ruff, so a refused input starts
+  # nothing. A separate version step would start Ruff before the check.
   - run:
       name: Execute ruff check
       environment:
