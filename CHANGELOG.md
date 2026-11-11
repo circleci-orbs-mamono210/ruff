@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+* `ruff/check` no longer shows or keeps an earlier run's report when `output-file` is set. Ruff leaves the file untouched when it stops on a configuration or command-line error (exit 2), so the old report used to be printed as `Report written to …` and stored as if it were the new result. The Orb now creates the parent directory and empties the file before Ruff runs, and `tee` prints the report only when this run wrote something to it. An empty report is announced as `Report <path> is empty.` instead.
+
+### Changed
+
+* `ruff/check` exits 2 without running Ruff when it cannot create the parent directory of `output-file` or empty the file. A non-zero status from Ruff is always returned unchanged, including when printing the report fails. When Ruff exits 0 but `tee` cannot read the report back, the step exits 2; previously a missing report passed silently.
+
 ## [0.0.1] - 2026-08-11
 
 Initial release of the Ruff CircleCI Orb.

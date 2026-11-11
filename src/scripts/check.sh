@@ -180,8 +180,8 @@ if [ "${PARAM_OUTPUT_FORMAT}" != 'default' ]; then
   RUFF_ARGS+=('--output-format' "${PARAM_OUTPUT_FORMAT}")
 fi
 
-# Ruff creates the parent directories and truncates the file itself, so no
-# preparation is needed here.
+# The file itself is prepared just before Ruff runs, once every input check
+# has passed. See the comment above that step.
 if [ -n "${PARAM_OUTPUT_FILE}" ]; then
   RUFF_ARGS+=('--output-file' "${PARAM_OUTPUT_FILE}")
 fi
@@ -240,6 +240,23 @@ printf 'Command:'
 printf ' %q' ruff check "${RUFF_ARGS[@]}" "${TARGETS[@]}"
 printf '\n'
 
+# Ruff only rewrites the output file once it gets as far as reporting. A
+# configuration or command line error exits 2 and leaves the file untouched,
+# so a report from an earlier run would otherwise be shown and stored as this
+# run's result. Emptying the file first means that whatever it holds afterwards
+# was written by this run. When that is impossible the step stops with 2, the
+# status Ruff itself uses when it cannot create the output file, and Ruff is
+# not run.
+if [ -n "${PARAM_OUTPUT_FILE}" ]; then
+  if ! mkdir -p -- "$(dirname -- "${PARAM_OUTPUT_FILE}")" ||
+    ! printf '' > "${PARAM_OUTPUT_FILE}"; then
+    echo \
+      "Could not prepare the report file '${PARAM_OUTPUT_FILE}', so Ruff was not run." \
+      >&2
+    exit 2
+  fi
+fi
+
 STATUS=0
 
 set +e
@@ -249,11 +266,31 @@ set -e
 
 # Ruff writes to '--output-file' INSTEAD of standard output and has no '--tee'
 # of its own, so the report is echoed back here to keep it in the job log.
+# Only a non-empty report is printed. The file was emptied above, so an empty
+# file means this run wrote nothing to it, for example after a configuration
+# error or under 'verbosity: quiet'.
+REPORT_STATUS=0
+
 if [ -n "${PARAM_OUTPUT_FILE}" ] && is_true "${PARAM_TEE}"; then
-  if [ -f "${PARAM_OUTPUT_FILE}" ]; then
+  if [ ! -f "${PARAM_OUTPUT_FILE}" ] || [ ! -r "${PARAM_OUTPUT_FILE}" ]; then
+    REPORT_STATUS=1
+  elif [ -s "${PARAM_OUTPUT_FILE}" ]; then
     echo "Report written to ${PARAM_OUTPUT_FILE}:"
-    cat "${PARAM_OUTPUT_FILE}"
+    cat -- "${PARAM_OUTPUT_FILE}" || REPORT_STATUS=1
+  else
+    echo "Report ${PARAM_OUTPUT_FILE} is empty."
   fi
+
+  if [ "${REPORT_STATUS}" -ne 0 ]; then
+    echo "Could not read the report file '${PARAM_OUTPUT_FILE}'." >&2
+  fi
+fi
+
+# Ruff's own non-zero status is always returned unchanged, so printing the
+# report can never turn a failure into a success. A run that Ruff passed still
+# fails with 2 when the report it was asked to print could not be read.
+if [ "${STATUS}" -eq 0 ] && [ "${REPORT_STATUS}" -ne 0 ]; then
+  exit 2
 fi
 
 # 'exit-zero' applies to reported violations only. Ruff exits 2 for a missing

@@ -243,7 +243,7 @@ To show what fixing *would* change without touching anything, use `diff` instead
 
 ## Saving the Report as an Artifact
 
-Use `output-file` to write the report to a file. Ruff creates the parent directory, truncates an existing file and never writes colour into it, so the artifact needs no extra settings.
+Use `output-file` to write the report to a file. Before Ruff starts, the Orb creates the parent directory and empties the file, so the file only ever holds what the current run wrote. Ruff never writes colour into it, so the artifact needs no extra settings.
 
 ```yaml
 version: 2.1
@@ -283,6 +283,22 @@ Ruff writes to the file **instead of** standard output and has no `--tee` of its
 
 `output-format: github` emits workflow annotations, and `junit` or `sarif` suit report ingestion.
 
+### Report handling and exit status
+
+Ruff leaves `output-file` untouched when it stops on a configuration or command-line error and exits 2. Because the Orb has already emptied the file, such a run leaves an empty file, so neither the log nor the artifact shows an earlier run's report.
+
+| Situation | `output-file` afterwards | Log with `tee: true` | Exit status |
+| --------- | ------------------------ | -------------------- | ----------- |
+| Ruff wrote a report | The report of this run | `Report written to <path>:` followed by the report | Ruff's |
+| Ruff wrote nothing, for example after a configuration error, or with `verbosity: quiet` when nothing is reported | Empty | `Report <path> is empty.` | Ruff's |
+| The Orb cannot create the parent directory or empty the file | Left as it was; Ruff is not run | An error message | 2 |
+| Ruff exited 0 but the report cannot be read back | Whatever is at the path | An error message | 2 |
+| Ruff exited non-zero and the report cannot be read back | Whatever is at the path | An error message | Ruff's |
+
+With `tee: false` the Orb neither prints nor reads the report, so the last two rows do not apply.
+
+The Orb never changes a non-zero status from Ruff, so printing the report cannot hide a failure. The status 2 for a file that cannot be prepared matches what Ruff itself returns when it cannot create the output file. In that case the Orb does not delete the file, so a later step that stores the path regardless of the failure, for example with `when: always`, stores whatever the file already held.
+
 ## Exit Codes
 
 | Code | Meaning |
@@ -292,6 +308,8 @@ Ruff writes to the file **instead of** standard output and has no `--tee` of its
 | 2 | Configuration error or command-line usage error |
 
 `exit-zero` applies to reported violations only, so a broken configuration keeps failing the step. Note that a path which does not exist is reported as a violation and exits 1, so `exit-zero` **does** mask it. A reporting step that uses `exit-zero` should therefore always be paired with a gating step that does not.
+
+With `output-file`, `ruff/check` also exits 2 when the file cannot be prepared, in which case Ruff is not run, and when Ruff exited 0 but `tee` cannot read the report back. A non-zero status from Ruff is always passed through unchanged. See [Report handling and exit status](#report-handling-and-exit-status).
 
 `ruff format` has no `--exit-zero`. In `check` and `diff` mode it exits 1 when a file would be reformatted.
 

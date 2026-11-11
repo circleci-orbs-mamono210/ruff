@@ -33,3 +33,30 @@ for asserting that `fix: never` leaves the checkout untouched.
 Do not introduce any other violation into these files. Several tests assert on
 the absence of a rule as well as its presence, so an extra violation would
 make them pass or fail for the wrong reason.
+
+## Report regression
+
+`report/regression.sh` checks how `src/scripts/check.sh` handles `output-file`
+and `tee`. It calls the script directly, because several cases must fail. The
+`parameter-tests` job runs it after `write-check-defaults` and reuses the
+`PARAM_*` defaults that command writes to `/tmp/check-defaults.sh`.
+
+- Most cases seed the report with the line `ORB-TEST-STALE-REPORT-MARKER`
+  first. That marker must never appear in the log or in a report afterwards.
+- The cases rely on `clean/compliant.py` passing and on
+  `violations/unused_import.py` reporting a single `F401`.
+- The cases that run the real Ruff keep their reports under
+  `reports/report-regression`, so they are stored as artifacts with the other
+  reports.
+- `report/mock-ruff.sh` stands in for Ruff where a failure has to be injected,
+  such as a report that cannot be read back. A temporary copy named `ruff` is
+  put first on `PATH`. It records every call, so a case can assert that Ruff
+  was not started.
+- The read-only report case is skipped when the script runs as root, because
+  root can write to a read-only file. The CircleCI convenience images run as
+  an ordinary user, so the case runs in CI.
+
+To run the cases outside CircleCI, install Ruff 0.16.2 and write the defaults
+with the shell commands of `write-check-defaults` in
+`.circleci/test-deploy.yml`. Then run `bash tests/report/regression.sh`. Set
+`CHECK_DEFAULTS` when the defaults are not in `/tmp/check-defaults.sh`.

@@ -244,6 +244,18 @@ jobs:
           extra-args: --extend-fixable F401 --no-show-fixes
           targets: tests/clean
 
+      # Ruff exits 2 on a configuration or command line error without
+      # touching output-file, so an earlier run's report must not be printed
+      # or kept as this run's result. The script seeds each report with a
+      # marker and covers success, violations and errors with tee on and off,
+      # repeated runs into the same file, and failures to prepare or read the
+      # report. It invokes check.sh directly because several cases must fail.
+      # The reports it keeps under reports/report-regression are stored with
+      # the others, so a leaked marker would also show in the artifacts.
+      - run:
+          name: Verify the report reflects only the latest run
+          command: bash tests/report/regression.sh
+
       - store_artifacts:
           path: reports
 
