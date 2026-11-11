@@ -579,6 +579,16 @@ jobs:
 
             echo 'Globs were preserved as literal Ruff arguments.'
 
+      # targets and extensions are split on spaces, tabs and newlines, and the
+      # paths follow '--', with './' in front of a relative path that starts
+      # with '-' or '@'. The script compares what a recording stand-in for
+      # Ruff receives with the expected lists, then runs Ruff 0.16.2 on files
+      # named '-', '--help' and '@args'. It works in a temporary directory, so
+      # it adds nothing to reports/.
+      - run:
+          name: Verify targets and extensions reach Ruff as paths and mappings
+          command: bash tests/arguments/regression.sh check
+
       # store_artifacts below stores every report this job writes, so it has
       # to stay the last step. This step checks the reports first. The files
       # must match the list below one to one, and tests/README.md documents
@@ -1011,6 +1021,12 @@ jobs:
       - ruff/format:
           line-length: "40"
           targets: tests/line-length/formatted_at_40.py
+
+      # The same argument cases as in parameter-tests, against format.sh. They
+      # work in a temporary directory, so the fixtures stay untouched.
+      - run:
+          name: Verify targets and extensions reach Ruff as paths and mappings
+          command: bash tests/arguments/regression.sh format
 
       # Every test above restores what it changes. Comparing with the
       # snapshot catches a fixture that was left modified, or a file that was

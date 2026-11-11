@@ -206,6 +206,37 @@ Ruff draws the line at files, not at settings, so `config-overrides` and `line-l
     line-length: "100"
 ```
 
+## Choosing the Files
+
+`targets` names the files and directories that `ruff/check` and `ruff/format` work on. Separate the items with spaces, tabs or newlines, so a YAML block with one path per line works:
+
+```yaml
+- ruff/check:
+    targets: |
+      src
+      tests
+      tools/release.py
+```
+
+Both commands read `targets` the same way:
+
+* Empty lines are ignored. An empty or blank value means `.`, the working directory, which is also the default.
+* Every item is a path. The paths are passed after `--`, and a relative path that starts with `-` or `@` is passed as `./<path>`. A file named `-`, `--help` or `@args` is therefore checked or formatted as that file; it never makes Ruff read standard input, run an option or expand an argument file. Absolute paths and other relative paths are passed unchanged.
+* Nothing is evaluated. Quotes, backslashes, `$`, `~` and glob characters reach Ruff as they are, so `"my file.py"` is the two paths `"my` and `file.py"`. Ruff does not expand glob characters either, so name a directory rather than a pattern such as `src/*.py`.
+* A path that contains whitespace cannot be given. Name a directory that contains it instead.
+* Options do not belong in `targets`. Pass them through `extra-args`.
+
+`extensions` is split the same way, and each `extension:language` mapping is passed as its own `--extension`:
+
+```yaml
+- ruff/check:
+    extensions: |
+      pyw:python
+      ipy:ipynb
+```
+
+Version 0.0.1 read `targets` and `extensions` only up to the first newline, so every later line was silently ignored. It also passed the paths without `--`, so an item that started with `-` reached Ruff as an option, `-` read standard input and `@name` was expanded as an argument file. An option written into `targets` is now looked up as a file instead and is not applied: `ruff/check` reports it as a missing file (`E902`, exit 1, which `exit-zero` masks) and `ruff/format` exits 2. Move such options to `extra-args`.
+
 ## Excluding Paths
 
 `extend-excluded-paths` adds to Ruff's built-in exclusions, which already cover `.git`, `__pycache__`, `.venv`, `node_modules` and similar directories.
@@ -344,7 +375,7 @@ Runs `ruff check` against the selected source files or directories.
 | `extend-excluded-paths`    | string  | `""`      | Comma-separated exclusion globs, added to the built-in list               |
 | `extend-per-file-ignores`  | string  | `""`      | Comma-separated `pattern:rule` pairs, added to the configured ones          |
 | `extend-selected-rules`    | string  | `""`      | Rule codes added to the current selection                                  |
-| `extensions`               | string  | `""`      | Whitespace-separated `extension:language` mappings                        |
+| `extensions`               | string  | `""`      | `extension:language` mappings separated by spaces, tabs or newlines, each passed as `--extension` |
 | `extra-args`               | string  | `""`      | Whitespace-separated additional arguments; shell quoting and glob expansion are not evaluated |
 | `fix`                      | enum    | `never`   | Whether Ruff may rewrite files: `never`, `auto`, `safe` or `unsafe`        |
 | `fix-only`                 | boolean | `false`   | Apply fixes without reporting the remaining violations                     |
@@ -364,7 +395,7 @@ Runs `ruff check` against the selected source files or directories.
 | `show-fixes`               | enum    | `auto`    | Print an enumeration of the applied fixes                                 |
 | `statistics`               | boolean | `false`   | Print a count per rule instead of the individual violations               |
 | `target-version`           | enum    | `default` | Minimum Python version the code must support                              |
-| `targets`                  | string  | `.`       | Whitespace-separated files or directories; shell glob expansion is not performed |
+| `targets`                  | string  | `.`       | Files or directories separated by spaces, tabs or newlines; every item is a path, see [Choosing the Files](#choosing-the-files) |
 | `tee`                      | boolean | `true`    | With `output-file`, also print the report to the job log                   |
 | `unfixable`                | string  | `""`      | Rule codes that must never be fixed                                       |
 | `verbosity`                | enum    | `default` | Log verbosity: `default`, `verbose`, `quiet` or `silent`                  |
@@ -384,7 +415,7 @@ Runs `ruff format` against the selected source files or directories.
 | `excluded-paths`           | string  | `""`      | Comma-separated exclusion globs, replaces the built-in list     |
 | `exit-non-zero-on-format`  | boolean | `false`   | Fail the step when any file was reformatted                     |
 | `extend-excluded-paths`    | string  | `""`      | Comma-separated exclusion globs, added to the built-in list     |
-| `extensions`               | string  | `""`      | Whitespace-separated `extension:language` mappings              |
+| `extensions`               | string  | `""`      | `extension:language` mappings separated by spaces, tabs or newlines, each passed as `--extension` |
 | `extra-args`               | string  | `""`      | Whitespace-separated additional arguments                       |
 | `force-exclude`            | enum    | `auto`    | Apply exclusions to paths named on the command line             |
 | `isolated`                 | boolean | `false`   | Ignore every configuration file                                 |
@@ -395,7 +426,7 @@ Runs `ruff format` against the selected source files or directories.
 | `preview`                  | enum    | `auto`    | Enable unstable formatting                                      |
 | `respect-gitignore`        | enum    | `auto`    | Honour `.gitignore` and other standard ignore files             |
 | `target-version`           | enum    | `default` | Minimum Python version the code must support                    |
-| `targets`                  | string  | `.`       | Whitespace-separated files or directories                       |
+| `targets`                  | string  | `.`       | Files or directories separated by spaces, tabs or newlines; every item is a path, see [Choosing the Files](#choosing-the-files) |
 | `verbosity`                | enum    | `default` | Log verbosity: `default`, `verbose`, `quiet` or `silent`        |
 
 `ruff format` has no `--output-file`, so there is no `output-file` or `tee` parameter here.

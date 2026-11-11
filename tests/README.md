@@ -153,3 +153,46 @@ To compare a run with the table, use the manifest that `Verify the reports to
 be stored` prints and the log of the `store_artifacts` step. Every report with
 content must appear as an artifact. Every empty report must appear either as
 an artifact or as skipped. Anything else is a mismatch.
+
+## Argument regression
+
+`arguments/regression.sh` checks how `src/scripts/check.sh` and
+`src/scripts/format.sh` pass `targets` and `extensions` to Ruff.
+`parameter-tests` runs `bash tests/arguments/regression.sh check` with the
+defaults that `write-check-defaults` writes. `format-tests` runs
+`bash tests/arguments/regression.sh format`, and the script carries the
+defaults of `src/commands/format.yml` for it, spelled out as in the other
+`format-tests` steps.
+
+- The argument cases put a temporary copy of `arguments/record-ruff.sh`,
+  named `ruff`, first on `PATH`. It writes the arguments it receives to a
+  file, separated by NUL characters, and exits 0. The cases compare the paths
+  after `--` and the value of every `--extension` with the expected lists, and
+  require the `Command:` line to show exactly the arguments received. They
+  cover one line, several lines, empty lines and indentation, tabs, empty and
+  blank values, glob characters, quotes, shell syntax, backslashes, and items
+  that start with `-` or `@`. The glob cases run next to files that the globs
+  would match.
+- The Ruff cases run Ruff 0.16.2 on files named `-`, `--help` and `@args`,
+  with other code on standard input and a file named `args` for `@args` to
+  expand. Each file must be reported under its own name. They also run
+  `extensions` given on several lines with an empty `targets`, compare an
+  empty and a blank `targets` with `.`, and pin the exit status: 0, 1 and 2
+  for both scripts, `exit-zero` for `check.sh`, and the `diff` and `write`
+  modes for `format.sh`.
+- No case may print a line that starts with `PARAM_`, like the debug output
+  both scripts used to have.
+- Everything runs in a temporary directory with an empty `ruff.toml`, which
+  is removed on exit. The cases write nothing to `tests/` or `reports/`, so
+  the fixture snapshot of `format-tests` and the report list of
+  `parameter-tests` are unaffected, and no Ruff configuration outside that
+  directory applies.
+
+The cases compare only what `targets` and `extensions` decide, not the whole
+argument list, so a change to an unrelated flag does not break them. Reading
+only the first line again, dropping `--` from the Ruff call, or no longer
+adding `./` each makes cases fail for both scripts.
+
+To run the cases outside CircleCI, install Ruff 0.16.2, write the defaults for
+the `check` cases as described in "Report regression", and run the two
+commands above.

@@ -4,6 +4,7 @@ set -eo pipefail
 RUFF_ARGS=()
 EXTRA_ARGS=()
 EXTENSIONS=()
+TARGET_WORDS=()
 TARGETS=()
 
 is_true() {
@@ -99,15 +100,18 @@ if [ "${PARAM_TARGET_VERSION}" != 'default' ]; then
   RUFF_ARGS+=('--target-version' "${PARAM_TARGET_VERSION}")
 fi
 
-# Split extensions on shell whitespace without evaluating shell syntax or
-# performing pathname expansion. Ruff takes one mapping per flag.
-if [ -n "${PARAM_EXTENSIONS}" ]; then
-  read -r -a EXTENSIONS <<< "${PARAM_EXTENSIONS}"
+# Split extensions on spaces, tabs and newlines, so every line counts and
+# empty lines vanish. Nothing is evaluated: quotes, '$', '~' and glob
+# characters stay literal. printf ends the value with a NUL, which no
+# parameter can contain, so read takes the whole value at once. If it cannot
+# be read, the script stops instead of carrying on without the mappings. Ruff
+# takes one mapping per flag.
+IFS=$' \t\n' read -r -d '' -a EXTENSIONS \
+  < <(printf '%s\0' "${PARAM_EXTENSIONS}")
 
-  for extension in "${EXTENSIONS[@]}"; do
-    RUFF_ARGS+=('--extension' "${extension}")
-  done
-fi
+for extension in "${EXTENSIONS[@]}"; do
+  RUFF_ARGS+=('--extension' "${extension}")
+done
 
 if [ "${PARAM_OUTPUT_FORMAT}" != 'default' ]; then
   RUFF_ARGS+=('--output-format' "${PARAM_OUTPUT_FORMAT}")
@@ -154,19 +158,38 @@ if [ -n "${PARAM_EXTRA_ARGS}" ]; then
   RUFF_ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
-# Split targets on shell whitespace without performing pathname expansion.
-# Paths containing whitespace are not supported by this parameter format.
-read -r -a TARGETS <<< "${PARAM_TARGETS}"
+# targets holds paths and nothing else. It is split like extensions, and an
+# empty or blank value means the working directory. The paths follow '--', so
+# none is read as an option. A relative path that starts with '-' or '@' also
+# gets './' in front: Ruff reads standard input for '-', and expands '@name'
+# as an argument file even after '--'. Paths containing whitespace cannot be
+# expressed in this format.
+IFS=$' \t\n' read -r -d '' -a TARGET_WORDS \
+  < <(printf '%s\0' "${PARAM_TARGETS}")
 
-printf 'PARAM_MODE=%q\n' "${PARAM_MODE}"
+for target in "${TARGET_WORDS[@]}"; do
+  case "${target}" in
+    -* | @*)
+      TARGETS+=("./${target}")
+      ;;
+    *)
+      TARGETS+=("${target}")
+      ;;
+  esac
+done
+
+if [ "${#TARGETS[@]}" -eq 0 ]; then
+  TARGETS=('.')
+fi
+
 printf 'Command:'
-printf ' %q' ruff format "${RUFF_ARGS[@]}" "${TARGETS[@]}"
+printf ' %q' ruff format "${RUFF_ARGS[@]}" -- "${TARGETS[@]}"
 printf '\n'
 
 STATUS=0
 
 set +e
-ruff format "${RUFF_ARGS[@]}" "${TARGETS[@]}"
+ruff format "${RUFF_ARGS[@]}" -- "${TARGETS[@]}"
 STATUS=$?
 set -e
 

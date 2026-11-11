@@ -100,9 +100,9 @@ parameters:
   extensions:
     default: ''
     description: >
-      Whitespace separated list of 'extension:language' mappings
-      (ruff '--extension'), for example 'ipy:ipynb'. Each item is passed as
-      a separate argument.
+      'extension:language' mappings (ruff '--extension'), for example
+      'ipy:ipynb', separated by spaces, tabs or newlines. Empty lines are
+      ignored, and each mapping is passed as its own '--extension'.
     type: string
   extra-args:
     default: ''
@@ -282,7 +282,14 @@ parameters:
   targets:
     default: '.'
     description: >
-      Whitespace separated list of source files or directories to check.
+      Files or directories to check, separated by spaces, tabs or newlines.
+      Empty lines are ignored, and an empty or blank value means '.'. Every
+      item is a path: the paths are passed after '--', and a relative path
+      that starts with '-' or '@' gets './' in front, so none is read as an
+      option, as standard input or as an argument file. Nothing is
+      evaluated, so quotes, '$', '~' and glob characters are passed as they
+      are, and a path that contains whitespace cannot be given. Pass options
+      through 'extra-args'.
     type: string
   tee:
     default: true
