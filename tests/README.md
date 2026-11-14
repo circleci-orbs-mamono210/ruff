@@ -117,6 +117,10 @@ and `tee`. It calls the script directly, because several cases must fail. The
   root can write to a read-only file. The CircleCI convenience images run as
   an ordinary user, so the case runs in CI.
 
+`parameter-tests` keeps the log of the run, and the job compares the cases
+it ran with the list in `arguments/check-parameters.md`; see "ruff/check
+parameters" below.
+
 To run the cases outside CircleCI, install Ruff 0.16.2 and run
 `bash tests/report/regression.sh`.
 
@@ -152,6 +156,8 @@ adds, renames or removes a report.
 | `reports/no-tee.txt` | `check.sh` with `tee: false` | `F401` |
 | `reports/tee.txt` | `check.sh` with `tee: true` | `F401` |
 | `reports/isolated-line-length.txt` | `ruff/check` with `isolated: true` and `line_length: "40"` | Four `E501` lines |
+| `reports/output-format.json` | `ruff/check` with `output_format: json` | A JSON list with the `F401`, `F821` and `I001` findings |
+| `reports/diff.txt` | `ruff/check` with `diff: true` | `Would fix 1 error.`, Ruff's summary; the diff goes to the log |
 | `reports/report-regression/success-tee.txt` | `report/regression.sh`, case `success-tee` | `All checks passed!` |
 | `reports/report-regression/success-no-tee.txt` | `report/regression.sh`, case `success-no-tee` | `All checks passed!` |
 | `reports/report-regression/violations-tee.txt` | `report/regression.sh`, case `violations-tee` | `F401` |
@@ -183,7 +189,9 @@ an artifact or as skipped. Anything else is a mismatch.
 and what they refuse. `parameter-tests` runs
 `bash tests/arguments/regression.sh check` and `format-tests` runs
 `bash tests/arguments/regression.sh format`. Every case starts from the shared
-defaults of that command; see "Shared defaults" below.
+defaults of that command; see "Shared defaults" below. `parameter-tests`
+keeps the log of the `check` run and compares the cases it ran with the list
+in `arguments/check-parameters.md`.
 
 - The argument cases put a temporary copy of `arguments/record-ruff.sh`,
   named `ruff`, first on `PATH`. It appends every call to one file, answers
@@ -398,4 +406,66 @@ comparison elsewhere, put the three records in one directory:
 
 ```console
 python tests/environment/compare.py /tmp/orb.yml .circleci/test-deploy.yml RECORDS /tmp/out
+```
+
+## ruff/check parameters
+
+`arguments/check-parameters.md` is the table of where each public parameter
+of `ruff/check` is tested: its default, the values that are tried and what
+reaches Ruff for each, the checks with Ruff 0.16.2, and the regression cases
+that cover it. It ends with the full list of the cases that
+`report/regression.sh` and `arguments/regression.sh check` run.
+
+The `check-parameter-tests` job runs `arguments/check-parameters.py` on the
+orb packed from the same commit. The script runs the packed `check` step the
+way CircleCI does: it fills every `<<parameters.NAME>>` of the step's
+environment with the value of a case or with the default, and runs the
+step's script with bash. A case names public parameters only, so a parameter
+that does not reach the script fails its case.
+
+- 77 argument cases run with `arguments/record-ruff.sh` as Ruff, at least one
+  per parameter with a value other than its default and one per value of
+  each enum. Each compares the options before `--` as a whole, the paths
+  after it in their order, and the order where it matters: `extra_args`
+  after every other option, and the `--config` values as `config_file`, then
+  the `config_overrides` lines, then `line_length`. Of several overrides of
+  one setting, Ruff 0.16.2 applies the first, as `ruff check --show-settings`
+  shows, so a `line-length` in `config_overrides` takes precedence over
+  `line_length`; no Ruff case checks that. The `Command:` line must show the
+  arguments received, and Ruff must be started twice, `ruff --version`
+  first. One more case checks that `fix_only` under `fix: never` is refused
+  before Ruff starts.
+- 13 Ruff cases run Ruff 0.16.2 on files they write to a temporary directory
+  with an empty `ruff.toml`, or with the setting the case needs, and require
+  an exact exit status, output lines and file contents. They cover `diff`,
+  `output_format: json`, `extensions`, `fixable`, `unfixable`, `fix: safe`
+  against `fix: unsafe`, `ignore_noqa`, `show_fixes`, `preview`,
+  `force_exclude`, `respect_gitignore`, `cache_dir` and `excluded_paths`, and
+  the exit statuses: 0 for a clean file, 1 for a violation, 2 for a missing
+  `config_file`, 1 for refused input without starting Ruff, and 0 for an
+  allowed fix. `respect_gitignore` needs `git`, because Ruff applies a
+  `.gitignore` only inside a Git repository.
+- It fails when a parameter has no case with another value than its default,
+  an enum value has no case, or the table has no row, or an extra row, for a
+  parameter.
+
+It prints every case and stores the details, with the arguments received and
+the output of every run, as the artifact `check-parameters/results.json`.
+
+`parameter-tests` runs some of these parameters through the `ruff/check`
+command itself: `output_format: json`, whose report must parse and hold each
+finding of `violations/`; `diff: true` with `exit_zero: true`, after which
+the fixture must be unchanged; `excluded_paths`, `force_exclude: enabled` and
+`cache_dir`. It also keeps the logs of the two regression scripts, stores
+them as the artifacts `regression-logs/*.log`, and runs
+`arguments/check-parameters.py --regression-log`, which fails unless the
+cases that ran are exactly the ones `check-parameters.md` lists. The
+read-only report case of `report/regression.sh` is skipped as root, so run
+that comparison as an ordinary user, as CircleCI does.
+
+To run the script elsewhere, with Ruff 0.16.2 and PyYAML installed:
+
+```console
+circleci orb pack src > /tmp/orb.yml
+python tests/arguments/check-parameters.py /tmp/orb.yml
 ```

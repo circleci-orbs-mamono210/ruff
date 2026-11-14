@@ -341,6 +341,81 @@ jobs:
           extend_per_file_ignores: "tests/violations/*:F401,tests/violations/*:I001,tests/violations/*:F821"
           targets: tests/violations
 
+      # excluded_paths replaces Ruff's default exclusion list. Nothing below
+      # tests/ but tests/violations has a finding, so this passes only when
+      # the value reached Ruff.
+      - ruff/check:
+          excluded_paths: tests/violations
+          targets: tests
+
+      # Ruff checks a file named in targets even when it is excluded, unless
+      # force_exclude is enabled. unused_import.py reports F401, so this
+      # passes only when force_exclude reached Ruff.
+      - ruff/check:
+          extend_excluded_paths: tests/violations/unused_import.py
+          force_exclude: enabled
+          targets: tests/violations/unused_import.py
+
+      # The JSON report must parse and hold the one finding of each fixture in
+      # tests/violations, with its code and position.
+      - ruff/check:
+          exit_zero: true
+          output_file: reports/output-format.json
+          output_format: json
+          targets: tests/violations
+
+      - run:
+          name: Verify output_format json reached Ruff
+          command: |
+            python3 -c '
+            import json
+            import pathlib
+            import sys
+
+            findings = json.loads(pathlib.Path(sys.argv[1]).read_text())
+            found = sorted(
+                (
+                    pathlib.Path(f["filename"]).name,
+                    f["code"],
+                    f["location"]["row"],
+                    f["location"]["column"],
+                )
+                for f in findings
+            )
+            expected = [
+                ("undefined_name.py", "F821", 6, 12),
+                ("unsorted_imports.py", "I001", 3, 1),
+                ("unused_import.py", "F401", 3, 8),
+            ]
+            print(found)
+            sys.exit(0 if found == expected else f"Expected {expected}")
+            ' reports/output-format.json
+
+      # diff prints to the log the change each fix would make, and exits 1
+      # when there is one, which exit_zero turns into 0. Ruff writes only its
+      # summary to output_file. The fixture must stay as it is.
+      - ruff/check:
+          diff: true
+          exit_zero: true
+          output_file: reports/diff.txt
+          targets: tests/violations/unsorted_imports.py
+
+      - run:
+          name: Verify diff reached Ruff
+          command: grep -Fxq 'Would fix 1 error.' reports/diff.txt
+
+      - verify-fixtures-unchanged:
+          after: the diff run
+
+      # cache_dir moves Ruff's cache out of the project.
+      - ruff/check:
+          cache_dir: /tmp/ruff-cache-dir
+          targets: tests/clean
+
+      - run:
+          name: Verify cache_dir reached Ruff
+          command: test -f /tmp/ruff-cache-dir/CACHEDIR.TAG
+
       # Smoke test for argument construction: whitespace separated targets
       # together with several independent flags.
       - ruff/check:
@@ -380,10 +455,14 @@ jobs:
       # repeated runs into the same file, and failures to prepare or read the
       # report. It invokes check.sh directly because several cases must fail.
       # The reports it keeps under reports/report-regression are stored with
-      # the others, so a leaked marker would also show in the artifacts.
+      # the others, so a leaked marker would also show in the artifacts. The
+      # log is kept for the comparison with tests/arguments/check-parameters.md
+      # below.
       - run:
           name: Verify the report reflects only the latest run
-          command: bash tests/report/regression.sh
+          command: |
+            mkdir -p /tmp/regression-logs
+            bash tests/report/regression.sh | tee /tmp/regression-logs/report.log
 
       # config_overrides carries whitespace inside each value, so this proves
       # the parameter is split on newlines rather than on whitespace.
@@ -730,7 +809,25 @@ jobs:
       # nothing is added to reports/.
       - run:
           name: Verify the arguments passed to Ruff and the refused input
-          command: bash tests/arguments/regression.sh check
+          command: |
+            mkdir -p /tmp/regression-logs
+            bash tests/arguments/regression.sh check |
+              tee /tmp/regression-logs/arguments-check.log
+
+      # tests/arguments/check-parameters.md lists the cases of both regression
+      # scripts, and the cases that ran must be exactly those.
+      - run:
+          name: Verify check-parameters.md lists the regression cases that ran
+          command: >-
+            python3 tests/arguments/check-parameters.py
+            --regression-log tests/report/regression.sh
+            /tmp/regression-logs/report.log
+            --regression-log tests/arguments/regression.sh
+            /tmp/regression-logs/arguments-check.log
+
+      - store_artifacts:
+          path: /tmp/regression-logs
+          destination: regression-logs
 
       - verify-fixtures-unchanged:
           after: the parameter tests
@@ -754,10 +851,12 @@ jobs:
 
             non_empty=(
               reports/config-overrides.txt
+              reports/diff.txt
               reports/isolated-line-length.txt
               reports/legacy-defaults.txt
               reports/line-length.txt
               reports/no-tee.txt
+              reports/output-format.json
               reports/report-regression/exit-zero-violations.txt
               reports/report-regression/rerun-clean.txt
               reports/report-regression/rerun.txt
@@ -1149,6 +1248,37 @@ jobs:
           name: Verify the shared defaults match the packed commands
           command: python tests/defaults/compare.py /tmp/packed-orb.yml
 
+  # Every public parameter of ruff/check, from the orb that orb-tools/pack
+  # packed from this commit to Ruff. tests/arguments/check-parameters.py
+  # runs the packed step with a recording stand-in for Ruff for every
+  # parameter and every value of an enum, and with Ruff 0.16.2 for the
+  # parameters whose effect it checks. It works in a temporary directory.
+  # tests/arguments/check-parameters.md is the table of where each parameter
+  # is tested, and the script checks that it has a row for each.
+  check-parameter-tests:
+    executor: ruff/default
+    steps:
+      - checkout
+      - record-fixtures
+      - locate-packed-orb
+
+      - ruff/install:
+          version: "0.16.2"
+
+      - record-environment
+
+      - run:
+          name: Verify every parameter of ruff/check reaches Ruff
+          command: >-
+            python3 tests/arguments/check-parameters.py /tmp/packed-orb.yml
+            --report /tmp/check-parameters
+
+      - verify-fixtures-unchanged
+
+      - store_artifacts:
+          path: /tmp/check-parameters
+          destination: check-parameters
+
   # ruff/install on an image the job names itself, as a user who does not
   # use the Orb's executor would run it. It does not test the 'image'
   # parameter of ruff/default; executor-image-test does.
@@ -1282,6 +1412,11 @@ workflows:
             - orb-tools/pack
           filters: *filters
 
+      - check-parameter-tests:
+          requires:
+            - orb-tools/pack
+          filters: *filters
+
       - executor-comparison:
           requires:
             - orb-tools/pack
@@ -1303,6 +1438,7 @@ workflows:
           enable_pr_comment: false
           requires:
             - orb-tools/pack
+            - check-parameter-tests
             - command-tests
             - executor-comparison
             - executor-image-test

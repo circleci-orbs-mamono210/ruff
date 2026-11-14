@@ -43,15 +43,17 @@ parameters:
     description: >
       Print the diff each fix would produce instead of applying it
       (ruff '--diff'). Implies '--fix-only', so no violation report is
-      printed, and the step fails when any diff exists. Use it to show what
-      'fix' would change.
+      printed, and the step fails when any diff exists unless 'exit_zero' is
+      set. The diff goes to the job log even when 'output_file' is set; the
+      file then only receives Ruff's summary line. Use it to show what 'fix'
+      would change.
     type: boolean
   excluded_paths:
     default: ''
     description: >
       Comma separated list of file patterns to omit from the run
       (ruff '--exclude'). This REPLACES Ruff's default exclusion list, which
-      covers '.git', '__pycache__', '.venv', 'node_modules' and similar, so
+      covers '.git', '.venv', 'venv', 'dist', 'node_modules' and similar, so
       prefer 'extend_excluded_paths' unless that is intended.
     type: string
   exit_non_zero_on_fix:
