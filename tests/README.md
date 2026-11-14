@@ -191,7 +191,8 @@ and what they refuse. `parameter-tests` runs
 `bash tests/arguments/regression.sh format`. Every case starts from the shared
 defaults of that command; see "Shared defaults" below. `parameter-tests`
 keeps the log of the `check` run and compares the cases it ran with the list
-in `arguments/check-parameters.md`.
+in `arguments/check-parameters.md`, and `format-tests` does the same for the
+`format` run with `arguments/format-parameters.md`.
 
 - The argument cases put a temporary copy of `arguments/record-ruff.sh`,
   named `ruff`, first on `PATH`. It appends every call to one file, answers
@@ -342,8 +343,8 @@ python tests/defaults/compare.py /tmp/orb.yml
 ## Execution environment
 
 Every job that runs Ruff records where it ran: `command-tests`,
-`parameter-tests`, `format-tests`, `install-tests`, `executor-image-test` and
-`resource-class-test`. The `record-environment` command runs
+`parameter-tests`, `format-tests`, `install-tests`, `executor-image-test`,
+`resource-class-test`, `check-parameter-tests` and `format-parameter-tests`. The `record-environment` command runs
 `environment/record.py` after `ruff/install`, prints the record and stores it
 as the artifact `environment/<job>.json`. It holds:
 
@@ -468,4 +469,77 @@ To run the script elsewhere, with Ruff 0.16.2 and PyYAML installed:
 ```console
 circleci orb pack src > /tmp/orb.yml
 python tests/arguments/check-parameters.py /tmp/orb.yml
+```
+
+## ruff/format parameters
+
+`arguments/format-parameters.md` is the same kind of table for `ruff/format`.
+It also sets out what each mode prints and which setting wins over which
+with Ruff 0.16.2, and it ends with the full list of the cases that
+`arguments/regression.sh format` runs.
+
+The `format-parameter-tests` job runs `arguments/format-parameters.py` on the
+orb packed from the same commit. Like `check-parameters.py`, it runs the
+packed `format` step the way CircleCI does.
+
+- 58 argument cases run with `arguments/record-ruff.sh` as Ruff, at least one
+  per parameter with a value other than its default and one per value of
+  each enum. Each compares the options before `--` as a whole, the paths
+  after it in their order, `extra_args` after every other option, and the
+  `--config` values as `config_file`, then the `config_overrides` lines.
+  `line_length` is passed as `--line-length`, which Ruff 0.16.2 applies over
+  a `line-length` from `config_overrides` in either order, unlike
+  `ruff/check`. The `Command:` line must show the arguments received, and
+  Ruff must be started twice, `ruff --version` first. Two more cases check
+  that `--` and `@args` in `extra_args` are refused before Ruff starts.
+- 19 Ruff cases run Ruff 0.16.2 through `arguments/record-real-ruff.sh`,
+  which records the arguments of each run and then runs the real Ruff. They
+  write their files to a temporary directory with an empty `ruff.toml`, or
+  with the setting the case needs. Each run requires an exact exit status,
+  and the case checks the arguments received, standard output and standard
+  error separately, and the files before and after. They cover
+  `line_length`, `config_file`, `config_overrides`, `isolated`,
+  `excluded_paths`, `extend_excluded_paths`, `extensions`, `force_exclude`,
+  `respect_gitignore`, `target_version`, `preview`, `no_cache`, `cache_dir`,
+  `output_format`, `verbosity`, `extra_args`, `color`,
+  `exit_non_zero_on_format` and the three modes, settings that Ruff cannot
+  use, and which setting wins over which. `respect_gitignore` needs `git`.
+- It fails when a parameter has no case with another value than its default,
+  an enum value has no case, or the table has no row, or an extra row, for a
+  parameter.
+
+It prints every case and stores the details, with the arguments received and
+the output of every run, as the artifact `format-parameters/results.json`.
+
+Since Ruff 0.16, `check` mode shows the change as well, in its default `full`
+report, so the code of the change appears in both modes and does not tell
+them apart. `ruff-modes` requires, for
+each mode, the option Ruff received and the form of the output: a diagnostic
+per file and the summary on standard output for `check`, a unified diff on
+standard output and the summary on standard error for `diff`. `format-tests`
+checks the same forms on the fixture: `Verify check mode fails on an
+unformatted file` and `Verify diff mode fails without modifying the file` run
+`src/scripts/format.sh` and look at standard output and standard error
+separately. To confirm that both catch a `diff` mode that runs as `check`
+mode, make the `diff` branch of `src/scripts/format.sh` pass `--check` on a
+throwaway branch: the diff mode step and `ruff-modes` fail. Do not merge the
+change.
+
+`format-tests` also runs some of these parameters through the `ruff/format`
+command itself, each on an input that would be reformatted unless the value
+reaches Ruff: `config_file`, `config_overrides`, `isolated` together with
+`config_overrides`, `excluded_paths`, `force_exclude: enabled`,
+`target_version: py38` and `preview: enabled`. `cache_dir` and `no_cache`
+are followed by a look at the cache. The inputs that are not fixtures are
+written to `/tmp`. The job also keeps the log of
+`arguments/regression.sh format`, stores it as the artifact
+`regression-logs/arguments-format.log`, and runs
+`arguments/format-parameters.py --regression-log`, which fails unless the
+cases that ran are exactly the ones `format-parameters.md` lists.
+
+To run the script elsewhere, with Ruff 0.16.2, PyYAML and `git` installed:
+
+```console
+circleci orb pack src > /tmp/orb.yml
+python tests/arguments/format-parameters.py /tmp/orb.yml
 ```

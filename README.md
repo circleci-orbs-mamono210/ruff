@@ -150,8 +150,8 @@ The list form used in a config file, `"tests/*" = ["S101", "F401"]`, is not acce
 
 | Mode | Behaviour |
 | ---- | --------- |
-| `check` | Reports which files would be reformatted; fails the step if there are any |
-| `diff` | Also prints the exact changes, which makes a failure actionable from the log |
+| `check` | Reports every file that would be reformatted, in `output_format`; with Ruff 0.16.2 the default `full` report also shows the change. Fails the step if there are any |
+| `diff` | Prints the changes as a unified diff instead, with the summary on standard error, and ignores `output_format`. Fails the step if there are any |
 | `write` | **Rewrites the files in place**; only useful when the job goes on to commit the result |
 
 > Since Ruff 0.16.0 the formatter also reformats Python code blocks inside Markdown files, so `targets: .` reaches every `.md` file in the repository. Add `*.md` to `extend_excluded_paths` when that is not wanted.

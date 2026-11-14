@@ -112,11 +112,14 @@ parameters:
     description: >
       What the formatter does with the files.
 
-      'check' passes '--check', reports which files would be reformatted and
-      fails the step if there are any. This is the mode a CI gate wants.
+      'check' passes '--check', reports every file that would be reformatted
+      in 'output_format' and fails the step if there are any. This is the
+      mode a CI gate wants. With Ruff 0.16.2 the default 'full' report also
+      shows the change for each file.
 
-      'diff' passes '--diff' and additionally prints the exact changes, which
-      makes a failure actionable from the log alone.
+      'diff' passes '--diff' and prints the changes as a unified diff
+      instead, with the summary on standard error. It fails the step in the
+      same way and ignores 'output_format'.
 
       Neither of the two rewrites the files it is given. This is verified
       with Ruff 0.16.2 for runs set up through the parameters of this
@@ -137,7 +140,9 @@ parameters:
     default: default
     description: >
       Serialization format used when reporting the files that would be
-      reformatted (ruff '--output-format'). Only applies in 'check' mode.
+      reformatted (ruff '--output-format'). Only 'check' mode reports in it:
+      Ruff 0.16.2 accepts the flag in the other modes, but prints the same
+      diff in 'diff' mode whatever the value, and no report in 'write' mode.
       'default' passes no flag, so Ruff's own default of 'full' applies, and
       'github' emits workflow annotations.
     enum: ["default", "concise", "full", "json", "json-lines", "junit",

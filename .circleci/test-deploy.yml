@@ -973,6 +973,12 @@ jobs:
       # set but must fail the formatter gate. Running the command through the
       # step would fail the job, so the script is invoked directly. 'mode' is
       # left at the shared default, which must be 'check'.
+      #
+      # Since Ruff 0.16, check mode shows the change too: its default 'full'
+      # report gives each file a diagnostic with the old and the new lines.
+      # What sets it apart from diff mode is the form, checked on standard
+      # output and standard error separately: a diagnostic, no unified diff,
+      # and the summary on standard output.
       - run:
           name: Verify check mode fails on an unformatted file
           command: |
@@ -980,27 +986,59 @@ jobs:
 
             source tests/defaults/format.sh
 
-            before="$(cat tests/unformatted/spacing.py)"
+            before="$(sha256sum tests/unformatted/spacing.py)"
 
             set +e
             PARAM_TARGETS='tests/unformatted' \
-              bash src/scripts/format.sh
+              bash src/scripts/format.sh \
+              > /tmp/format-check.out 2> /tmp/format-check.err
             status=$?
             set -e
 
-            if [ "${status}" -eq 0 ]; then
-              echo 'check mode passed on an unformatted file'
+            echo '--- standard output ---'
+            cat /tmp/format-check.out
+            echo '--- standard error ---'
+            cat /tmp/format-check.err
+            echo '---'
+
+            failures=0
+
+            fail() {
+              echo "FAIL: $*"
+              failures=$((failures + 1))
+            }
+
+            if [ "${status}" -ne 1 ]; then
+              fail "expected exit status 1, got ${status}"
+            fi
+
+            for line in \
+              'unformatted: File would be reformatted' \
+              ' --> tests/unformatted/spacing.py:2:1' \
+              '3 + VALUES = [1, 2, 3]' \
+              '1 file would be reformatted'; do
+              if ! grep -Fxq -- "${line}" /tmp/format-check.out; then
+                fail "standard output has no line '${line}'"
+              fi
+            done
+
+            if grep -Eq '^(--- |\+\+\+ |@@ )' /tmp/format-check.out; then
+              fail 'standard output has a unified diff'
+            fi
+
+            if [ -s /tmp/format-check.err ]; then
+              fail 'standard error is not empty'
+            fi
+
+            if [ "$(sha256sum tests/unformatted/spacing.py)" != "${before}" ]; then
+              fail 'check mode modified the file'
+            fi
+
+            if [ "${failures}" -ne 0 ]; then
               exit 1
             fi
 
-            after="$(cat tests/unformatted/spacing.py)"
-
-            if [ "${before}" != "${after}" ]; then
-              echo 'check mode modified the file'
-              exit 1
-            fi
-
-            echo 'check mode correctly failed without modifying the file.'
+            echo 'check mode failed with exit 1 and its own report, and left the file alone.'
 
       # 'write' mode is the only mode that rewrites files, and the rewritten
       # file must then satisfy the check mode.
@@ -1035,8 +1073,12 @@ jobs:
       - verify-fixtures-unchanged:
           after: the write mode test
 
-      # 'diff' mode must fail like 'check' mode and additionally print the
-      # changes, while still leaving the file alone.
+      # 'diff' mode must fail like 'check' mode, with exit 1, and leave the
+      # file alone. Both modes show the change with Ruff 0.16.2, so the code
+      # of the change does not tell them apart. What does is the form: diff
+      # mode prints a unified diff on standard output and the summary on
+      # standard error, and none of the diagnostic of check mode. A diff
+      # mode that ran as check mode fails every one of these.
       - run:
           name: Verify diff mode fails without modifying the file
           command: |
@@ -1044,37 +1086,69 @@ jobs:
 
             source tests/defaults/format.sh
 
-            before="$(cat tests/unformatted/spacing.py)"
+            before="$(sha256sum tests/unformatted/spacing.py)"
 
             set +e
-            output="$(
-              PARAM_MODE='diff' \
-              PARAM_TARGETS='tests/unformatted' \
-                bash src/scripts/format.sh 2>&1
-            )"
+            PARAM_MODE='diff' \
+            PARAM_TARGETS='tests/unformatted' \
+              bash src/scripts/format.sh \
+              > /tmp/format-diff.out 2> /tmp/format-diff.err
             status=$?
             set -e
 
-            printf '%s\n' "${output}"
+            echo '--- standard output ---'
+            cat /tmp/format-diff.out
+            echo '--- standard error ---'
+            cat /tmp/format-diff.err
+            echo '---'
 
-            if [ "${status}" -eq 0 ]; then
-              echo 'diff mode passed on an unformatted file'
+            failures=0
+
+            fail() {
+              echo "FAIL: $*"
+              failures=$((failures + 1))
+            }
+
+            if [ "${status}" -ne 1 ]; then
+              fail "expected exit status 1, got ${status}"
+            fi
+
+            for line in \
+              '--- tests/unformatted/spacing.py' \
+              '+++ tests/unformatted/spacing.py' \
+              '@@ -1,4 +1,3 @@' \
+              '-VALUES = [1,' \
+              '+VALUES = [1, 2, 3]'; do
+              if ! grep -Fxq -- "${line}" /tmp/format-diff.out; then
+                fail "standard output has no line '${line}'"
+              fi
+            done
+
+            for line in \
+              'unformatted: File would be reformatted' \
+              '1 file would be reformatted'; do
+              if grep -Fxq -- "${line}" /tmp/format-diff.out; then
+                fail "standard output has the line '${line}' of check mode"
+              fi
+            done
+
+            if grep -Eq '^ *--> ' /tmp/format-diff.out; then
+              fail 'standard output has the location line of check mode'
+            fi
+
+            if ! grep -Fxq '1 file would be reformatted' /tmp/format-diff.err; then
+              fail 'standard error has no summary line'
+            fi
+
+            if [ "$(sha256sum tests/unformatted/spacing.py)" != "${before}" ]; then
+              fail 'diff mode modified the file'
+            fi
+
+            if [ "${failures}" -ne 0 ]; then
               exit 1
             fi
 
-            if [ "${before}" != "$(cat tests/unformatted/spacing.py)" ]; then
-              echo 'diff mode modified the file'
-              exit 1
-            fi
-
-            # 'check' mode reports only which files would change; 'diff' mode
-            # is distinguished by printing the change itself.
-            if ! printf '%s\n' "${output}" | grep -q 'VALUES'; then
-              echo 'diff mode did not print the change'
-              exit 1
-            fi
-
-            echo 'diff mode correctly failed and printed the change.'
+            echo 'diff mode failed with exit 1 and a unified diff, and left the file alone.'
 
       # 'exit_non_zero_on_format' turns a successful rewrite into a failure,
       # which is how a 'write' mode job reports that it changed something.
@@ -1209,14 +1283,132 @@ jobs:
             --no-preview
           targets: tests/clean
 
+      # The steps below run ruff/format itself with a parameter that decides
+      # whether the step passes: without the value, Ruff would report a file
+      # that would be reformatted. The inputs that are not fixtures are
+      # written to /tmp, so tests/ stays as it was checked out.
+      - run:
+          name: Write the inputs of the format parameter steps
+          command: |
+            set -euo pipefail
+
+            mkdir -p /tmp/format-inputs
+
+            printf '%s\n' 'line-length = 40' \
+              > /tmp/format-inputs/line-length-40.toml
+
+            # Formatted for py37 and py38. From py39 on, which includes
+            # Ruff's default of py310, Ruff puts the context managers in
+            # parentheses.
+            printf '%s\n' \
+              'with open("a_long_file_name_aaaaaaaaaaaaaaaaaaaaa.txt") as first_file, open(' \
+              '    "b_long_file_name_bbbbbbbbbbbbbbbbbbbbb.txt"' \
+              ') as second_file:' \
+              '    pass' \
+              > /tmp/format-inputs/py38.py
+
+            # Formatted by the preview style of Ruff 0.16.2, which hugs a
+            # sole dictionary argument. The stable style does not.
+            printf '%s\n' \
+              'handle_event({' \
+              '    "message": "an error occurred while closing the stream",' \
+              '    "exception": None,' \
+              '})' \
+              > /tmp/format-inputs/preview.py
+
+      # formatted_at_40.py is formatted at 40 but not at Ruff's default of
+      # 88, so each of these passes only when its value reaches Ruff.
+      - ruff/format:
+          config_file: /tmp/format-inputs/line-length-40.toml
+          targets: tests/line-length/formatted_at_40.py
+
+      - ruff/format:
+          config_overrides: line-length = 40
+          targets: tests/line-length/formatted_at_40.py
+
+      # isolated ignores configuration files, but an inline setting from
+      # config_overrides still applies.
+      - ruff/format:
+          config_overrides: line-length = 40
+          isolated: true
+          targets: tests/line-length/formatted_at_40.py
+
+      # excluded_paths replaces Ruff's default exclusion list. Nothing below
+      # tests/ but these two directories would be reformatted.
+      - ruff/format:
+          excluded_paths: tests/line-length,tests/unformatted
+          targets: tests
+
+      # Ruff formats a file named in targets even when it is excluded,
+      # unless force_exclude is enabled.
+      - ruff/format:
+          extend_excluded_paths: tests/unformatted/spacing.py
+          force_exclude: enabled
+          targets: tests/unformatted/spacing.py
+
+      - ruff/format:
+          target_version: py38
+          targets: /tmp/format-inputs/py38.py
+
+      - ruff/format:
+          preview: enabled
+          targets: /tmp/format-inputs/preview.py
+
+      # cache_dir moves Ruff's cache out of the project, and no_cache keeps
+      # Ruff from writing one at all. The cache that the steps above wrote is
+      # removed first, so the last check sees only what no_cache did.
+      - ruff/format:
+          cache_dir: /tmp/ruff-format-cache
+          targets: tests/clean
+
+      - run:
+          name: Verify cache_dir reached Ruff
+          command: test -f /tmp/ruff-format-cache/CACHEDIR.TAG
+
+      - run:
+          name: Remove the cache of the steps above
+          command: rm -rf .ruff_cache
+
+      - ruff/format:
+          no_cache: true
+          targets: tests/clean
+
+      - run:
+          name: Verify no_cache reached Ruff
+          command: |
+            if [ -e .ruff_cache ]; then
+              echo 'ruff/format wrote .ruff_cache although no_cache was set'
+              exit 1
+            fi
+
+            echo 'No cache was written.'
+
       # The same argument and refusal cases as in parameter-tests, against
       # format.sh. With the real Ruff they also check that the 'check' and
       # 'diff' modes leave a file alone when ruff.toml, pyproject.toml or
       # config_overrides make the formatter want to change it. They work in a
-      # temporary directory, so the fixtures stay untouched.
+      # temporary directory, so the fixtures stay untouched. The log is kept
+      # for the comparison with tests/arguments/format-parameters.md below.
       - run:
           name: Verify the arguments passed to Ruff and the refused input
-          command: bash tests/arguments/regression.sh format
+          command: |
+            mkdir -p /tmp/regression-logs
+            bash tests/arguments/regression.sh format |
+              tee /tmp/regression-logs/arguments-format.log
+
+      # tests/arguments/format-parameters.md lists the cases of the format
+      # run of the regression script, and the cases that ran must be exactly
+      # those.
+      - run:
+          name: Verify format-parameters.md lists the regression cases that ran
+          command: >-
+            python3 tests/arguments/format-parameters.py
+            --regression-log tests/arguments/regression.sh
+            /tmp/regression-logs/arguments-format.log
+
+      - store_artifacts:
+          path: /tmp/regression-logs
+          destination: regression-logs
 
       # Every test above restores what it changes. Comparing with the
       # snapshot catches a fixture that was left modified, or a file that was
@@ -1278,6 +1470,40 @@ jobs:
       - store_artifacts:
           path: /tmp/check-parameters
           destination: check-parameters
+
+  # Every public parameter of ruff/format, from the orb that orb-tools/pack
+  # packed from this commit to Ruff. tests/arguments/format-parameters.py
+  # runs the packed step with a recording stand-in for Ruff for every
+  # parameter and every value of an enum. With Ruff 0.16.2 it records what
+  # Ruff received and compares, for each mode, standard output, standard
+  # error, the exit status and the files before and after, and it checks
+  # the parameters whose effect it covers. It works in a temporary
+  # directory. tests/arguments/format-parameters.md is the table of where
+  # each parameter is tested, and the script checks that it has a row for
+  # each.
+  format-parameter-tests:
+    executor: ruff/default
+    steps:
+      - checkout
+      - record-fixtures
+      - locate-packed-orb
+
+      - ruff/install:
+          version: "0.16.2"
+
+      - record-environment
+
+      - run:
+          name: Verify every parameter of ruff/format reaches Ruff
+          command: >-
+            python3 tests/arguments/format-parameters.py /tmp/packed-orb.yml
+            --report /tmp/format-parameters
+
+      - verify-fixtures-unchanged
+
+      - store_artifacts:
+          path: /tmp/format-parameters
+          destination: format-parameters
 
   # ruff/install on an image the job names itself, as a user who does not
   # use the Orb's executor would run it. It does not test the 'image'
@@ -1417,6 +1643,11 @@ workflows:
             - orb-tools/pack
           filters: *filters
 
+      - format-parameter-tests:
+          requires:
+            - orb-tools/pack
+          filters: *filters
+
       - executor-comparison:
           requires:
             - orb-tools/pack
@@ -1442,6 +1673,7 @@ workflows:
             - command-tests
             - executor-comparison
             - executor-image-test
+            - format-parameter-tests
             - format-tests
             - install-tests
             - packed-command-tests
