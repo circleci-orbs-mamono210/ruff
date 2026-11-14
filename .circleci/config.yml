@@ -1,7 +1,14 @@
 version: 2.1
 setup: true
+
+# Orb Development Kit, first half. The lint-pack workflow checks the Orb
+# source and packs it. orb-tools/continue then injects that packed Orb into
+# .circleci/test-deploy.yml under the name 'ruff' and continues the pipeline
+# with it, so the integration tests run the Orb built from this commit. No
+# development version is published to the registry, and no job here needs a
+# context or a token.
 orbs:
-  orb-tools: circleci/orb-tools@11.1
+  orb-tools: circleci/orb-tools@12.5.0
   shellcheck: circleci/shellcheck@3.1
 
 filters: &filters
@@ -15,24 +22,24 @@ workflows:
           filters: *filters
       - orb-tools/pack:
           filters: *filters
+      # orb_name is the key the usage examples use for this Orb. It enables
+      # RC011, which checks that the examples reference the major version of
+      # the tag being released. RC011 only runs in a pipeline for a tag of
+      # the form vX.Y.Z and is skipped everywhere else, so a passing branch
+      # pipeline says nothing about it. See "Development" in README.md for
+      # the check to run before a release tag is pushed.
       - orb-tools/review:
+          orb_name: ruff
           filters: *filters
       - shellcheck/check:
           filters: *filters
-      - orb-tools/publish:
-          orb-name: orbss/ruff
-          vcs-type: << pipeline.project.type >>
+      - orb-tools/continue:
+          orb_name: ruff
+          pipeline_number: << pipeline.number >>
+          vcs_type: << pipeline.project.type >>
           requires:
             - orb-tools/lint
-            - orb-tools/review
             - orb-tools/pack
+            - orb-tools/review
             - shellcheck/check
-          # Use a context to hold your publishing token.
-          context: CIRCLECI_ORBS
-          filters: *filters
-      # Triggers the next workflow in the Orb Development Kit.
-      - orb-tools/continue:
-          pipeline-number: << pipeline.number >>
-          vcs-type: << pipeline.project.type >>
-          requires: [orb-tools/publish]
           filters: *filters

@@ -1,8 +1,13 @@
 version: 2.1
 
+# Orb Development Kit, second half. orb-tools/continue in
+# .circleci/config.yml starts this configuration after replacing the empty
+# 'ruff' entry below with the Orb that its pack job built from this commit.
+# Every 'ruff/...' step here therefore runs that Orb, not a version from the
+# registry.
 orbs:
-  ruff: orbss/ruff@dev:<<pipeline.git.revision>>
-  orb-tools: circleci/orb-tools@11.1
+  ruff: {}
+  orb-tools: circleci/orb-tools@12.5.0
 
 filters: &filters
   tags:
@@ -1097,9 +1102,9 @@ jobs:
       - attach_workspace:
           at: dist
 
-      # orb-tools/pack persists the packed orb to the workspace. Depending on
-      # the orb-tools version it arrives as orb.yml or inside
-      # orb_source.tar.gz, so accept both and fail when neither is there.
+      # orb-tools/pack 12.5.0 persists the packed orb as orb_source.tar.gz at
+      # the root of the workspace, and the archive holds orb.yml. A plain
+      # orb.yml is accepted as well, and the step fails when neither is there.
       - run:
           name: Locate the packed orb
           command: |
@@ -1192,10 +1197,17 @@ workflows:
             - orb-tools/pack
           filters: *filters
 
+      # The only job that publishes, and the only one that uses a context. It
+      # runs for a tag of the form vX.Y.Z and for nothing else, and only after
+      # every job above has passed. It publishes the orb that orb-tools/pack
+      # packed in this workflow, from the same commit as the Orb the tests
+      # ran, and packed-command-tests has checked that very file. A tag
+      # pipeline has no pull request, so the PR comment step is turned off.
       - orb-tools/publish:
-          orb-name: orbss/ruff
-          vcs-type: << pipeline.project.type >>
-          pub-type: production
+          orb_name: orbss/ruff
+          vcs_type: << pipeline.project.type >>
+          pub_type: production
+          enable_pr_comment: false
           requires:
             - orb-tools/pack
             - command-tests

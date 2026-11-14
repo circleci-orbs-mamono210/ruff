@@ -561,16 +561,12 @@ Release history and notable changes are recorded in [CHANGELOG.md](https://githu
 
 ## Development
 
-The Orb source is stored under `src/` in unpacked Orb format.
+The Orb source is stored under `src/` in unpacked Orb format. The CircleCI pipeline uses the Orb Development Kit of `circleci/orb-tools@12.5.0` and runs in two parts:
 
-The CircleCI pipeline performs:
+1. `.circleci/config.yml` runs the `lint-pack` workflow: `orb-tools/lint`, `orb-tools/pack`, `orb-tools/review` and `shellcheck/check`. When all four pass, `orb-tools/continue` puts the Orb that `orb-tools/pack` built from this commit into `.circleci/test-deploy.yml` under the name `ruff` and continues the pipeline with it.
+2. `.circleci/test-deploy.yml` runs the `test-deploy` workflow. Its integration tests run that Orb. `orb-tools/publish` publishes a production version only for a tag of the form `vX.Y.Z`, and only after every other job of the workflow has passed.
 
-* Orb linting
-* Orb packing
-* Orb review
-* ShellCheck
-* Integration tests
-* Production publishing from semantic version tags
+No development version is published to the registry, so branches and pull requests need no publishing token. Only the production publish job uses the `CIRCLECI_ORBS` context, which has to provide a `CIRCLE_TOKEN` that may publish to the `orbss` namespace.
 
 The Orb slug has to exist in the registry before the first publish:
 
@@ -578,13 +574,21 @@ The Orb slug has to exist in the registry before the first publish:
 circleci orb create orbss/ruff --no-prompt
 ```
 
-Production releases use Semantic Versioning tags:
+Production releases use Semantic Versioning tags. The `v1.0.0` tag publishes Orb version `1.0.0`. A tag in any other form runs the checks and tests but publishes nothing.
+
+### Checking the usage examples before a release tag
+
+`orb-tools/review` runs the review check RC011 with `orb_name: ruff`. RC011 requires every usage example in `src/examples/` to reference the Orb with the major version of the release tag, for example `orbss/ruff@1.0.0` or `orbss/ruff@1` for `v1.0.0`. It runs only in a pipeline for a `vX.Y.Z` tag and is skipped everywhere else, so a passing branch pipeline does not show that it will pass. When it fails on a release tag, the pipeline stops before publishing; nothing deletes or moves the tag automatically.
+
+Run RC011 under the conditions of the planned tag before creating it, on the commit to be tagged. Use the review checks of the orb-tools version the pipeline pins. This needs `bats-core` and `yq` v4 on `PATH`. From the repository root:
 
 ```console
-v0.0.1
+git clone --depth 1 --branch v12.5.0 https://github.com/CircleCI-Public/orb-tools-orb.git /tmp/orb-tools-orb
+CIRCLE_TAG=v1.0.0 ORB_VAL_ORB_NAME=ruff ORB_VAL_SOURCE_DIR=src \
+  bats --filter RC011 /tmp/orb-tools-orb/src/scripts/review.bats
 ```
 
-The `v0.0.1` tag publishes Orb version `0.0.1`.
+The check has passed only when the output reads `ok 1 RC011: ...` without `# skip`. A `# skip` means that `CIRCLE_TAG` or `ORB_VAL_ORB_NAME` did not reach the check. A `not ok` names the first example that references another major version.
 
 ## License
 
