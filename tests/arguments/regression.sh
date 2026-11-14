@@ -15,10 +15,10 @@
 #   bash tests/arguments/regression.sh check
 #   bash tests/arguments/regression.sh format
 #
-# Both need Ruff 0.16.2 on PATH. 'check' also needs the PARAM_* defaults
-# written by the 'write-check-defaults' command in .circleci/test-deploy.yml;
-# set CHECK_DEFAULTS when that file is not /tmp/check-defaults.sh. 'format'
-# carries the defaults of src/commands/format.yml below.
+# Both need Ruff 0.16.2 on PATH. Every case starts from the shared PARAM_*
+# defaults in tests/defaults/check.sh or tests/defaults/format.sh, which
+# tests/defaults/compare.py keeps equal to the defaults of the published
+# command, and sets only what it is about.
 #
 # The argument cases put a copy of tests/arguments/record-ruff.sh first on
 # PATH and compare what it receives with the expected lists: the paths after
@@ -35,32 +35,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMMAND="${1:-}"
-CHECK_DEFAULTS="${CHECK_DEFAULTS:-/tmp/check-defaults.sh}"
-
-# The defaults of src/commands/format.yml, spelled out the same way as in the
-# format-tests steps of .circleci/test-deploy.yml.
-FORMAT_DEFAULTS=(
-  PARAM_CACHE_DIR=''
-  PARAM_COLOR='auto'
-  PARAM_CONFIG_FILE=''
-  PARAM_CONFIG_OVERRIDES=''
-  PARAM_EXCLUDED_PATHS=''
-  PARAM_EXIT_NON_ZERO_ON_FORMAT='false'
-  PARAM_EXTEND_EXCLUDED_PATHS=''
-  PARAM_EXTENSIONS=''
-  PARAM_EXTRA_ARGS=''
-  PARAM_FORCE_EXCLUDE='auto'
-  PARAM_ISOLATED='false'
-  PARAM_LINE_LENGTH=''
-  PARAM_MODE='check'
-  PARAM_NO_CACHE='false'
-  PARAM_OUTPUT_FORMAT='default'
-  PARAM_PREVIEW='auto'
-  PARAM_RESPECT_GITIGNORE='auto'
-  PARAM_TARGETS='.'
-  PARAM_TARGET_VERSION='default'
-  PARAM_VERBOSITY='default'
-)
 
 # Passes both 'ruff check' and 'ruff format --check'.
 CLEAN_SOURCE='print("clean")'
@@ -98,9 +72,10 @@ BEFORE=()
 AFTER=()
 SEPARATOR=''
 
-if [ "${COMMAND}" = 'check' ] && [ ! -s "${CHECK_DEFAULTS}" ]; then
-  echo "PARAM_* defaults not found at '${CHECK_DEFAULTS}'." >&2
-  echo "Run the 'write-check-defaults' command or set CHECK_DEFAULTS." >&2
+DEFAULTS="${ROOT}/tests/defaults/${COMMAND}.sh"
+
+if [ ! -s "${DEFAULTS}" ]; then
+  echo "PARAM_* defaults not found at '${DEFAULTS}'." >&2
   exit 1
 fi
 
@@ -112,6 +87,7 @@ fi
 RUFF_VERSION="$(ruff --version)"
 
 echo "Testing ${SCRIPT#"${ROOT}/"} with ${RUFF_VERSION} from $(command -v ruff)"
+echo "Defaults from ${DEFAULTS#"${ROOT}/"}"
 
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "${SCRATCH}"' EXIT
@@ -217,16 +193,8 @@ fail() {
 }
 
 load_defaults() {
-  local assignment
-
-  if [ "${COMMAND}" = 'check' ]; then
-    # shellcheck source=/dev/null
-    source "${CHECK_DEFAULTS}"
-  else
-    for assignment in "${FORMAT_DEFAULTS[@]}"; do
-      export "${assignment?}"
-    done
-  fi
+  # shellcheck source=/dev/null
+  source "${DEFAULTS}"
 }
 
 # run_case NAME DIRECTORY VARIABLE=VALUE...

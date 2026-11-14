@@ -39,6 +39,28 @@ Do not introduce any other violation into these files. Several tests assert on
 the absence of a rule as well as its presence, so an extra violation would
 make them pass or fail for the wrong reason.
 
+## Fixture snapshot
+
+`fixtures.sh` keeps the files under `tests/` as the commit has them while the
+tests run. Every job that uses the fixtures runs the `record-fixtures`
+command of `.circleci/test-deploy.yml` right after checkout, and
+`verify-fixtures-unchanged` after its last test.
+
+- `bash tests/fixtures.sh record SNAPSHOT` fails unless each of the six
+  fixtures above exists and has content. It then writes the SHA-256 of every
+  file under `tests/` to `SNAPSHOT`, `/tmp/fixtures.sha256` in CircleCI. It
+  refuses to overwrite an existing snapshot, so a later `record` cannot
+  replace the reference with fixtures that a test has changed.
+- `bash tests/fixtures.sh verify SNAPSHOT` fails when a file under `tests/`
+  was changed, removed or added since then, and shows which one.
+
+The tests that rewrite a fixture restore it themselves. `parameter-tests`
+verifies the snapshot right after its `fix` tests, and `format-tests` after
+its `write` mode test and its `exit_non_zero_on_format` test, so a fixture
+that was not restored fails there, before a later test can pass because of
+it. Every job verifies again at the end, which also catches a file left
+behind under `tests/`.
+
 ## Format line_length test
 
 `format-tests` exercises `line_length` through both `src/scripts/format.sh`
@@ -62,9 +84,9 @@ passed to Ruff.
   length used.
 - The `ruff/format` step after it passes `line_length: "40"` through the Orb
   command, so the mapping in `src/commands/format.yml` is covered as well.
-- `Record the fixtures` takes a SHA-256 snapshot of `tests/` after checkout.
-  `Verify the fixtures are unchanged` compares against it at the end of the
-  job.
+- `Verify the fixtures are unchanged after the exit_non_zero_on_format test`
+  runs right before the `format.sh` step, so that step starts from the
+  fixtures as checked out. See "Fixture snapshot" above.
 
 To confirm that the test still catches a dropped value, break it on a
 throwaway branch. Removing the `--line-length` handling from
@@ -76,8 +98,8 @@ the `ruff/format` step. Do not merge either change.
 
 `report/regression.sh` checks how `src/scripts/check.sh` handles `output_file`
 and `tee`. It calls the script directly, because several cases must fail. The
-`parameter-tests` job runs it after `write-check-defaults` and reuses the
-`PARAM_*` defaults that command writes to `/tmp/check-defaults.sh`.
+`parameter-tests` job runs it. Every case starts from the shared defaults in
+`defaults/check.sh`; see "Shared defaults" below.
 
 - Most cases seed the report with the line `ORB-TEST-STALE-REPORT-MARKER`
   first. That marker must never appear in the log or in a report afterwards.
@@ -95,10 +117,8 @@ and `tee`. It calls the script directly, because several cases must fail. The
   root can write to a read-only file. The CircleCI convenience images run as
   an ordinary user, so the case runs in CI.
 
-To run the cases outside CircleCI, install Ruff 0.16.2 and write the defaults
-with the shell commands of `write-check-defaults` in
-`.circleci/test-deploy.yml`. Then run `bash tests/report/regression.sh`. Set
-`CHECK_DEFAULTS` when the defaults are not in `/tmp/check-defaults.sh`.
+To run the cases outside CircleCI, install Ruff 0.16.2 and run
+`bash tests/report/regression.sh`.
 
 ## Reports stored as artifacts
 
@@ -112,7 +132,8 @@ the directory first:
 - No report may carry the stale-report marker of `report/regression.sh`.
 
 The step then prints the commit, the job URL, and the size and SHA-256 of every
-report.
+report. The job's environment record is stored apart from the reports, as
+`environment/parameter-tests.json`; see "Execution environment" below.
 
 `store_artifacts` runs even after an earlier step has failed, so a failed job
 can still store reports that failed the check or never reached it. Treat the
@@ -160,11 +181,9 @@ an artifact or as skipped. Anything else is a mismatch.
 `arguments/regression.sh` checks how `src/scripts/check.sh` and
 `src/scripts/format.sh` pass `targets`, `extensions` and `extra_args` to Ruff,
 and what they refuse. `parameter-tests` runs
-`bash tests/arguments/regression.sh check` with the defaults that
-`write-check-defaults` writes. `format-tests` runs
-`bash tests/arguments/regression.sh format`, and the script carries the
-defaults of `src/commands/format.yml` for it, spelled out as in the other
-`format-tests` steps.
+`bash tests/arguments/regression.sh check` and `format-tests` runs
+`bash tests/arguments/regression.sh format`. Every case starts from the shared
+defaults of that command; see "Shared defaults" below.
 
 - The argument cases put a temporary copy of `arguments/record-ruff.sh`,
   named `ruff`, first on `PATH`. It appends every call to one file, answers
@@ -223,8 +242,7 @@ break them. Reading only the first line again, dropping `--` from the Ruff
 call, no longer adding `./`, dropping `--no-fix-only`, or accepting a refused
 item each makes cases fail.
 
-To run the cases outside CircleCI, install Ruff 0.16.2, write the defaults for
-the `check` cases as described in "Report regression", and run the two
+To run the cases outside CircleCI, install Ruff 0.16.2 and run the two
 commands above.
 
 ## Packed commands
@@ -262,5 +280,122 @@ circleci orb pack src > /tmp/orb.yml
 python tests/arguments/packed-commands.py /tmp/orb.yml
 ```
 
-`packed-commands.py` lies below `tests/`, which one `ruff/check` step of
-`parameter-tests` lints with the default rule set. Keep it free of violations.
+The job also runs `defaults/compare.py` on the same file; see "Shared
+defaults" below.
+
+`packed-commands.py` and the other Python scripts below `tests/` are linted by
+one `ruff/check` step of `parameter-tests` with the default rule set. Keep
+them free of violations.
+
+## Shared defaults
+
+`defaults/check.sh` and `defaults/format.sh` hold the `PARAM_*` environment
+that the published `check` and `format` commands give their script when every
+parameter is left at its default: 35 variables for `check` and 20 for
+`format`. Every test that runs `src/scripts/check.sh` or
+`src/scripts/format.sh` directly sources the matching file and sets only what
+it is about: the steps of `parameter-tests` and `format-tests`,
+`report/regression.sh` and `arguments/regression.sh`. A parameter that a test
+leaves alone therefore has its published default. The `check` mode test of
+`format-tests`, for example, does not set `mode`.
+
+`packed-command-tests` runs `defaults/compare.py` on the orb packed from the
+same commit. For each command it renders the environment of the command's
+step with every default filled in, and requires the file to hold exactly
+those variables with exactly those values. A parameter that is added,
+removed or renamed, or a default that is changed, in `src/commands` or in the
+file alone fails the job, and the message names the variable and both
+values. Every line of the files must be `export PARAM_<NAME>='<value>'`, so
+the script reads the same values as Bash.
+
+`defaults/compare.py` cannot see a default that was changed the same way on
+both sides. The tests see such a change by what it does:
+
+- `command-tests` runs `ruff/check` on `tests/violations` with every
+  parameter at its default apart from `targets`, `output_file` and
+  `exit_zero`. `Verify the default check against the shared defaults`
+  requires the default rule set (`F401`, `F821` and `I001`, three
+  violations in all) in Ruff's default `full` output format, and the same
+  report from `check.sh` with `defaults/check.sh`. The step after it
+  requires the fixtures to be unchanged, so the defaults must not have fixed
+  anything. The two reports are stored as the artifacts
+  `reports/defaults/orb.txt` and `reports/defaults/script.txt`.
+- The steps of `parameter-tests` and `format-tests` that leave `fix` or
+  `mode` at its default expect the result of that default.
+
+A default whose change alters none of these results, such as `cache_dir`, is
+covered by `defaults/compare.py` alone. To run it elsewhere:
+
+```console
+circleci orb pack src > /tmp/orb.yml
+python tests/defaults/compare.py /tmp/orb.yml
+```
+
+## Execution environment
+
+Every job that runs Ruff records where it ran: `command-tests`,
+`parameter-tests`, `format-tests`, `install-tests`, `executor-image-test` and
+`resource-class-test`. The `record-environment` command runs
+`environment/record.py` after `ruff/install`, prints the record and stores it
+as the artifact `environment/<job>.json`. It holds:
+
+- the commit (`CIRCLE_SHA1`), the job, its number and URL, the workflow and
+  the pipeline;
+- the Python version, `PYTHON_VERSION` as the `cimg/python` images set it,
+  and the operating system. The `Spin up environment` step of the job,
+  behind the job URL, names the image that was started;
+- the output of `ruff --version` and the path of Ruff. The step fails unless
+  it is `ruff 0.16.2`, the version every `ruff/install` step installs;
+- the CPU and memory limits of the container, read from its cgroup
+  (`cpu.max` and `memory.max` on cgroup v2), and the CPU count and memory of
+  the host, which a resource class does not change.
+
+Only the `CIRCLE_*` variables listed in `record.py` and `PYTHON_VERSION` are
+read from the environment, so nothing else, a secret included, reaches the
+record. The commit and the job URL in the record tie the job's results and
+artifacts to the commit it tested.
+
+## Executor tests
+
+`ruff/default` takes `image` and `resource_class`. Three jobs run on it and
+pass their environment record to `executor-comparison` through the
+workspace:
+
+| Job | `image` | `resource_class` |
+| --- | ------- | ---------------- |
+| `command-tests` | default, `cimg/python:3.14` | default, `small` |
+| `executor-image-test` | `cimg/python:3.13` | default |
+| `resource-class-test` | default | `medium` |
+
+In all three jobs both values reach the executor as its parameters, not as
+an image or a resource class written into the job. `install-tests` names its
+image directly because it tests `ruff/install` on an image the user chose,
+not the executor.
+
+`executor-comparison` runs `environment/compare.py` with the orb packed from
+the same commit, `.circleci/test-deploy.yml` and the three records:
+
+1. The packed `default` executor must start one image, given by `image`,
+   with the resource class given by `resource_class`. The defaults of both
+   are read from the packed orb.
+2. What a job asked for is those defaults with the job's own arguments on
+   top, as CircleCI processes the configuration. The records must cover the
+   defaults, a non-default image and a non-default resource class, and come
+   from one commit and one pipeline, those of the comparing job. The
+   workflow may differ, because rerunning failed jobs starts a new one.
+3. The Python version a job recorded must start with the version in the tag
+   of its `cimg/python` image, so a job that ran another image fails.
+4. The CPU and memory limits must be equal within a resource class and
+   larger for a larger one, so `resource-class-test` must get more than the
+   two jobs on `small`. Every record must show a CPU limit. Memory is
+   compared when every record shows a limit, and the output says so when
+   none does. The limits are not compared with fixed numbers, because they
+   depend on the CircleCI plan.
+
+The job prints what each job asked for and what it recorded, and stores the
+same as the artifact `executor-comparison/executors.json`. To run the
+comparison elsewhere, put the three records in one directory:
+
+```console
+python tests/environment/compare.py /tmp/orb.yml .circleci/test-deploy.yml RECORDS /tmp/out
+```

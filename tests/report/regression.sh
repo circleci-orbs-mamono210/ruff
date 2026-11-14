@@ -13,17 +13,17 @@
 #
 #   bash tests/report/regression.sh
 #
-# The cases need Ruff 0.16.2 on PATH and the PARAM_* defaults written by the
-# 'write-check-defaults' command in .circleci/test-deploy.yml. Set
-# CHECK_DEFAULTS when that file is not /tmp/check-defaults.sh. The reports of
-# the cases that run the real Ruff are kept below REPORT_DIR, which defaults
-# to reports/report-regression. Failures are injected with
-# tests/report/mock-ruff.sh inside a temporary directory that is removed on
-# exit.
+# The cases need Ruff 0.16.2 on PATH. Every case starts from the shared
+# PARAM_* defaults in tests/defaults/check.sh, which tests/defaults/compare.py
+# keeps equal to the defaults of the published 'check' command, and sets only
+# what it is about. The reports of the cases that run the real Ruff are kept
+# below REPORT_DIR, which defaults to reports/report-regression. Failures are
+# injected with tests/report/mock-ruff.sh inside a temporary directory that is
+# removed on exit.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CHECK_DEFAULTS="${CHECK_DEFAULTS:-/tmp/check-defaults.sh}"
+DEFAULTS="${ROOT}/tests/defaults/check.sh"
 REPORT_DIR="${REPORT_DIR:-reports/report-regression}"
 STALE_MARKER='ORB-TEST-STALE-REPORT-MARKER'
 
@@ -35,9 +35,8 @@ CASE_STATUS=0
 
 cd "${ROOT}"
 
-if [ ! -s "${CHECK_DEFAULTS}" ]; then
-  echo "PARAM_* defaults not found at '${CHECK_DEFAULTS}'." >&2
-  echo "Run the 'write-check-defaults' command or set CHECK_DEFAULTS." >&2
+if [ ! -s "${DEFAULTS}" ]; then
+  echo "PARAM_* defaults not found at '${DEFAULTS}'." >&2
   exit 1
 fi
 
@@ -47,6 +46,7 @@ if ! command -v ruff > /dev/null; then
 fi
 
 echo "Using $(ruff --version) from $(command -v ruff)"
+echo "Defaults from ${DEFAULTS#"${ROOT}/"}"
 
 SCRATCH="$(mktemp -d)"
 trap 'chmod -R u+rwX "${SCRATCH}" 2> /dev/null || true; rm -rf "${SCRATCH}"' EXIT
@@ -83,7 +83,7 @@ run_check() {
   set +e
   (
     # shellcheck source=/dev/null
-    source "${CHECK_DEFAULTS}"
+    source "${DEFAULTS}"
 
     for assignment in "$@"; do
       export "${assignment?}"

@@ -14,82 +14,116 @@ filters: &filters
     only: /.*/
 
 commands:
-  verify-fixtures:
+  record-fixtures:
     description: >
-      Fail early when the committed fixtures are missing. Ruff exits 0 when it
-      finds no Python files, so an empty checkout would make every test pass
-      for the wrong reason.
+      Fail early when a fixture the tests rely on is missing or empty, and
+      take a snapshot of every file under tests/. Ruff exits 0 when it finds
+      no Python files, so an empty checkout would make every test pass for
+      the wrong reason. Run it once, right after checkout, so that
+      verify-fixtures-unchanged compares with the files of the commit.
     steps:
       - run:
-          name: Verify test fixtures
+          name: Verify the fixtures and record a snapshot of tests/
+          command: bash tests/fixtures.sh record /tmp/fixtures.sha256
+
+  verify-fixtures-unchanged:
+    description: >
+      Fail when a file under tests/ differs from the snapshot that
+      record-fixtures took after checkout. Use it after every step that
+      rewrites a fixture and restores it, and at the end of every job that
+      uses the fixtures, so that a fixture left modified cannot let a later
+      test pass for the wrong reason.
+    parameters:
+      after:
+        description: What the check follows. It only names the step.
+        type: string
+        default: the tests
+    steps:
+      - run:
+          name: Verify the fixtures are unchanged after << parameters.after >>
+          command: bash tests/fixtures.sh verify /tmp/fixtures.sha256
+
+  record-environment:
+    description: >
+      Record the commit, the job, the image, Python, Ruff and the CPU and
+      memory limits of this job in /tmp/environment/<job>.json, and store
+      the record as an artifact. Run it after ruff/install. The step fails
+      unless Ruff is the version below, which every ruff/install step of
+      this file installs.
+    parameters:
+      ruff_version:
+        description: The Ruff version the integration tests are pinned to.
+        type: string
+        default: "0.16.2"
+    steps:
+      - run:
+          name: Record the execution environment
+          command: >-
+            python3 tests/environment/record.py
+            --ruff-version '<< parameters.ruff_version >>'
+            /tmp/environment
+      - store_artifacts:
+          path: /tmp/environment
+          destination: environment
+
+  locate-packed-orb:
+    description: >
+      Copy the orb that orb-tools/pack packed from this commit to
+      /tmp/packed-orb.yml and install PyYAML for the scripts that read it.
+      orb-tools/pack 12.5.0 persists the orb as orb_source.tar.gz at the
+      root of the workspace, and the archive holds orb.yml. A plain orb.yml
+      is accepted as well, and the step fails when neither is there.
+    steps:
+      - attach_workspace:
+          at: dist
+
+      - run:
+          name: Locate the packed orb
           command: |
             set -euo pipefail
 
-            test -s tests/clean/compliant.py
-            test -s tests/line-length/formatted_at_40.py
-            test -s tests/violations/undefined_name.py
-            test -s tests/violations/unsorted_imports.py
-            test -s tests/violations/unused_import.py
-            test -s tests/unformatted/spacing.py
+            while IFS= read -r archive; do
+              tar -xzf "${archive}" -C "$(dirname "${archive}")"
+            done < <(find dist -type f -name 'orb_source.tar.gz')
 
-            echo 'Fixtures found:'
-            find tests -type f -name '*.py' -print
+            echo 'Files from the workspace:'
+            find dist -type f -print
 
-  write-check-defaults:
-    description: >
-      Write the full set of PARAM_* defaults used by the tests that invoke
-      'src/scripts/check.sh' directly. Those tests assert on behaviour the orb
-      command cannot express, such as a step that must fail, so they need
-      every parameter the command would otherwise supply.
-    steps:
+            packed="$(find dist -type f -name 'orb.yml' | LC_ALL=C sort | head -n 1)"
+
+            if [ -z "${packed}" ] || [ ! -s "${packed}" ]; then
+              echo 'The workspace holds no packed orb.yml'
+              exit 1
+            fi
+
+            cp "${packed}" /tmp/packed-orb.yml
+            echo "Commit: ${CIRCLE_SHA1:-unknown}"
+            sha256sum /tmp/packed-orb.yml
+
       - run:
-          name: Write check.sh parameter defaults
-          command: |
-            set -euo pipefail
-
-            : > /tmp/check-defaults.sh
-
-            for name in \
-              CACHE_DIR CONFIG_FILE CONFIG_OVERRIDES EXCLUDED_PATHS \
-              EXTEND_EXCLUDED_PATHS EXTEND_PER_FILE_IGNORES \
-              EXTEND_SELECTED_RULES EXTENSIONS EXTRA_ARGS FIXABLE \
-              IGNORED_RULES LINE_LENGTH OUTPUT_FILE PER_FILE_IGNORES \
-              SELECTED_RULES UNFIXABLE; do
-              echo "export PARAM_${name}=''" >> /tmp/check-defaults.sh
-            done
-
-            for name in \
-              DIFF EXIT_NON_ZERO_ON_FIX EXIT_ZERO FIX_ONLY IGNORE_NOQA \
-              ISOLATED NO_CACHE STATISTICS; do
-              echo "export PARAM_${name}='false'" >> /tmp/check-defaults.sh
-            done
-
-            for name in FORCE_EXCLUDE PREVIEW RESPECT_GITIGNORE SHOW_FIXES; do
-              echo "export PARAM_${name}='auto'" >> /tmp/check-defaults.sh
-            done
-
-            {
-              echo "export PARAM_COLOR='auto'"
-              echo "export PARAM_FIX='never'"
-              echo "export PARAM_OUTPUT_FORMAT='default'"
-              echo "export PARAM_TARGETS='.'"
-              echo "export PARAM_TARGET_VERSION='default'"
-              echo "export PARAM_TEE='true'"
-              echo "export PARAM_VERBOSITY='default'"
-            } >> /tmp/check-defaults.sh
-
-            echo 'Defaults written:'
-            cat /tmp/check-defaults.sh
+          name: Install PyYAML
+          command: python -m pip install --quiet pyyaml==6.0.3
 
 jobs:
+  # The published commands with their parameters at the defaults, apart from
+  # what a step names, on ruff/default with its defaults as well. The
+  # environment this job records is what executor-comparison compares the
+  # other executor tests with.
   command-tests:
     executor: ruff/default
     steps:
       - checkout
-      - verify-fixtures
+      - record-fixtures
 
       - ruff/install:
           version: "0.16.2"
+
+      - record-environment
+
+      - persist_to_workspace:
+          root: /tmp
+          paths:
+            - environment/command-tests.json
 
       # The clean fixture has no violations under the default rule set, so
       # the default parameters must pass.
@@ -100,15 +134,89 @@ jobs:
       - ruff/format:
           targets: tests/clean
 
+      # Every parameter but 'targets', 'output_file' and 'exit_zero' is at its
+      # default; the last two make the step write a report instead of
+      # failing. The next step checks the report against what the defaults
+      # have to give, the default rule set in Ruff's default output format,
+      # and verify-fixtures-unchanged after it that nothing was fixed. It also
+      # checks that check.sh with tests/defaults/check.sh writes the same
+      # report. tests/defaults/compare.py cannot see a default that was
+      # changed the same way in src/commands/check.yml and in
+      # tests/defaults/check.sh; these checks see one that changes the rules,
+      # the format or the fixing.
+      - ruff/check:
+          exit_zero: true
+          output_file: reports/defaults/orb.txt
+          targets: tests/violations
+
+      - run:
+          name: Verify the default check against the shared defaults
+          command: |
+            set -euo pipefail
+
+            source tests/defaults/check.sh
+
+            echo 'check.sh with tests/defaults/check.sh:'
+            PARAM_EXIT_ZERO='true' \
+            PARAM_OUTPUT_FILE='reports/defaults/script.txt' \
+            PARAM_TARGETS='tests/violations' \
+              bash src/scripts/check.sh
+
+            echo 'Report of ruff/check:'
+            cat reports/defaults/orb.txt
+
+            failures=0
+
+            # One environment came from CircleCI and one from the file, so
+            # both runs must have written the same report.
+            if ! cmp -s reports/defaults/orb.txt reports/defaults/script.txt; then
+              diff -u reports/defaults/orb.txt reports/defaults/script.txt || true
+              echo 'check.sh with the shared defaults wrote a different report'
+              failures=1
+            fi
+
+            # The default rule set covers pyflakes and isort, and each
+            # fixture holds one violation.
+            for code in F401 F821 I001; do
+              if ! grep -q "^${code} " reports/defaults/orb.txt; then
+                echo "The default rule set did not report ${code}"
+                failures=1
+              fi
+            done
+
+            if ! grep -Fxq 'Found 3 errors.' reports/defaults/orb.txt; then
+              echo 'Expected exactly three violations'
+              failures=1
+            fi
+
+            # Ruff's default output format, 'full', points at each violation
+            # with a ' --> path:line:column' line.
+            if ! grep -Fxq ' --> tests/violations/unused_import.py:3:8' \
+              reports/defaults/orb.txt; then
+              echo "The report is not in Ruff's default output format"
+              failures=1
+            fi
+
+            exit "${failures}"
+
+      # 'fix: never' is the default, so the report runs must have left the
+      # fixtures alone, although F401 and I001 are fixable.
+      - verify-fixtures-unchanged:
+          after: the default check
+
+      - store_artifacts:
+          path: reports
+
   parameter-tests:
     executor: ruff/default
     steps:
       - checkout
-      - verify-fixtures
-      - write-check-defaults
+      - record-fixtures
 
       - ruff/install:
           version: "0.16.2"
+
+      - record-environment
 
       # E501 is not in the default rule set, so the clean fixture only stops
       # being clean once both the rule and a short line length are supplied.
@@ -304,7 +412,7 @@ jobs:
           command: |
             set -euo pipefail
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             set +e
             output="$(
@@ -338,7 +446,7 @@ jobs:
           command: |
             set -euo pipefail
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             set +e
             output="$(
@@ -371,7 +479,7 @@ jobs:
 
             before="$(cat tests/violations/unused_import.py tests/violations/unsorted_imports.py)"
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             set +e
             PARAM_EXIT_ZERO='true' \
@@ -399,7 +507,7 @@ jobs:
 
             cp tests/violations/unsorted_imports.py /tmp/unsorted_imports.orig
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             set +e
             PARAM_EXIT_NON_ZERO_ON_FIX='true' \
@@ -428,6 +536,11 @@ jobs:
 
             echo 'fix: safe correctly rewrote the fixture.'
 
+      # The two tests above must leave the fixtures as they were, or the
+      # tests below would run on a repaired fixture.
+      - verify-fixtures-unchanged:
+          after: the fix tests
+
       # '--fix-only' implies '--fix' and wins over '--no-fix', so the command
       # refuses the combination rather than rewriting files silently.
       - run:
@@ -435,7 +548,7 @@ jobs:
           command: |
             set -euo pipefail
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             set +e
             PARAM_FIX_ONLY='true' \
@@ -460,7 +573,7 @@ jobs:
           command: |
             set -euo pipefail
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             printf 'line-length = 40\n' > /tmp/probe-config.toml
 
@@ -494,7 +607,7 @@ jobs:
           command: |
             set -euo pipefail
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             PARAM_CONFIG_OVERRIDES='lint.ignore = ["F401"]' \
             PARAM_ISOLATED='true' \
@@ -530,7 +643,7 @@ jobs:
           command: |
             set -euo pipefail
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             set +e
             PARAM_CONFIG_FILE='no-such-config.toml' \
@@ -557,7 +670,7 @@ jobs:
           command: |
             set -euo pipefail
 
-            source /tmp/check-defaults.sh
+            source tests/defaults/check.sh
 
             set +e
             output="$(
@@ -618,6 +731,9 @@ jobs:
       - run:
           name: Verify the arguments passed to Ruff and the refused input
           command: bash tests/arguments/regression.sh check
+
+      - verify-fixtures-unchanged:
+          after: the parameter tests
 
       # store_artifacts below stores every report this job writes, so it has
       # to stay the last step. This step checks the reports first. The files
@@ -738,24 +854,16 @@ jobs:
     executor: ruff/default
     steps:
       - checkout
-      - verify-fixtures
 
       # Several tests below rewrite a fixture and restore it. The snapshot
-      # lets the line_length test start from pristine fixtures and lets the
-      # last step prove that nothing was left modified.
-      - run:
-          name: Record the fixtures
-          command: |
-            set -euo pipefail
-
-            find tests -type f -print0 |
-              LC_ALL=C sort -z |
-              xargs -0 sha256sum > /tmp/fixtures-before.sha256
-
-            cat /tmp/fixtures-before.sha256
+      # lets verify-fixtures-unchanged prove after each of them, and at the
+      # end, that nothing was left modified.
+      - record-fixtures
 
       - ruff/install:
           version: "0.16.2"
+
+      - record-environment
 
       # The clean fixture is already formatted, so the default check mode
       # must pass on it.
@@ -764,35 +872,19 @@ jobs:
 
       # The unformatted fixture passes 'ruff check' under the default rule
       # set but must fail the formatter gate. Running the command through the
-      # step would fail the job, so the script is invoked directly.
+      # step would fail the job, so the script is invoked directly. 'mode' is
+      # left at the shared default, which must be 'check'.
       - run:
           name: Verify check mode fails on an unformatted file
           command: |
             set -euo pipefail
 
+            source tests/defaults/format.sh
+
             before="$(cat tests/unformatted/spacing.py)"
 
             set +e
-            PARAM_CACHE_DIR='' \
-            PARAM_COLOR='auto' \
-            PARAM_CONFIG_FILE='' \
-            PARAM_CONFIG_OVERRIDES='' \
-            PARAM_EXCLUDED_PATHS='' \
-            PARAM_EXIT_NON_ZERO_ON_FORMAT='false' \
-            PARAM_EXTEND_EXCLUDED_PATHS='' \
-            PARAM_EXTENSIONS='' \
-            PARAM_EXTRA_ARGS='' \
-            PARAM_FORCE_EXCLUDE='auto' \
-            PARAM_ISOLATED='false' \
-            PARAM_LINE_LENGTH='' \
-            PARAM_MODE='check' \
-            PARAM_NO_CACHE='false' \
-            PARAM_OUTPUT_FORMAT='default' \
-            PARAM_PREVIEW='auto' \
-            PARAM_RESPECT_GITIGNORE='auto' \
             PARAM_TARGETS='tests/unformatted' \
-            PARAM_TARGET_VERSION='default' \
-            PARAM_VERBOSITY='default' \
               bash src/scripts/format.sh
             status=$?
             set -e
@@ -841,6 +933,9 @@ jobs:
 
             echo 'write mode correctly reformatted the file.'
 
+      - verify-fixtures-unchanged:
+          after: the write mode test
+
       # 'diff' mode must fail like 'check' mode and additionally print the
       # changes, while still leaving the file alone.
       - run:
@@ -848,30 +943,14 @@ jobs:
           command: |
             set -euo pipefail
 
+            source tests/defaults/format.sh
+
             before="$(cat tests/unformatted/spacing.py)"
 
             set +e
             output="$(
-              PARAM_CACHE_DIR='' \
-              PARAM_COLOR='auto' \
-              PARAM_CONFIG_FILE='' \
-              PARAM_CONFIG_OVERRIDES='' \
-              PARAM_EXCLUDED_PATHS='' \
-              PARAM_EXIT_NON_ZERO_ON_FORMAT='false' \
-              PARAM_EXTEND_EXCLUDED_PATHS='' \
-              PARAM_EXTENSIONS='' \
-              PARAM_EXTRA_ARGS='' \
-              PARAM_FORCE_EXCLUDE='auto' \
-              PARAM_ISOLATED='false' \
-              PARAM_LINE_LENGTH='' \
               PARAM_MODE='diff' \
-              PARAM_NO_CACHE='false' \
-              PARAM_OUTPUT_FORMAT='default' \
-              PARAM_PREVIEW='auto' \
-              PARAM_RESPECT_GITIGNORE='auto' \
               PARAM_TARGETS='tests/unformatted' \
-              PARAM_TARGET_VERSION='default' \
-              PARAM_VERBOSITY='default' \
                 bash src/scripts/format.sh 2>&1
             )"
             status=$?
@@ -905,29 +984,14 @@ jobs:
           command: |
             set -euo pipefail
 
+            source tests/defaults/format.sh
+
             cp tests/unformatted/spacing.py /tmp/spacing.py.enzof
 
             set +e
-            PARAM_CACHE_DIR='' \
-            PARAM_COLOR='auto' \
-            PARAM_CONFIG_FILE='' \
-            PARAM_CONFIG_OVERRIDES='' \
-            PARAM_EXCLUDED_PATHS='' \
             PARAM_EXIT_NON_ZERO_ON_FORMAT='true' \
-            PARAM_EXTEND_EXCLUDED_PATHS='' \
-            PARAM_EXTENSIONS='' \
-            PARAM_EXTRA_ARGS='' \
-            PARAM_FORCE_EXCLUDE='auto' \
-            PARAM_ISOLATED='false' \
-            PARAM_LINE_LENGTH='' \
             PARAM_MODE='write' \
-            PARAM_NO_CACHE='false' \
-            PARAM_OUTPUT_FORMAT='default' \
-            PARAM_PREVIEW='auto' \
-            PARAM_RESPECT_GITIGNORE='auto' \
             PARAM_TARGETS='tests/unformatted' \
-            PARAM_TARGET_VERSION='default' \
-            PARAM_VERBOSITY='default' \
               bash src/scripts/format.sh
             status=$?
             set -e
@@ -940,6 +1004,10 @@ jobs:
             fi
 
             echo 'exit_non_zero_on_format correctly reported the rewrite.'
+
+      # The line_length test below starts from the fixtures as checked out.
+      - verify-fixtures-unchanged:
+          after: the exit_non_zero_on_format test
 
       # line_length has to travel from the Orb to Ruff. The two fixtures give
       # opposite answers at Ruff's default of 88 and at 40:
@@ -954,32 +1022,14 @@ jobs:
           command: |
             set -euo pipefail
 
-            # Start from the fixtures as checked out.
-            sha256sum --check --quiet /tmp/fixtures-before.sha256
+            source tests/defaults/format.sh
 
             failures=0
 
             run_format() {
-              PARAM_CACHE_DIR='' \
-              PARAM_COLOR='auto' \
-              PARAM_CONFIG_FILE='' \
-              PARAM_CONFIG_OVERRIDES='' \
-              PARAM_EXCLUDED_PATHS='' \
-              PARAM_EXIT_NON_ZERO_ON_FORMAT='false' \
-              PARAM_EXTEND_EXCLUDED_PATHS='' \
-              PARAM_EXTENSIONS='' \
-              PARAM_EXTRA_ARGS='' \
-              PARAM_FORCE_EXCLUDE='auto' \
-              PARAM_ISOLATED='false' \
               PARAM_LINE_LENGTH="$2" \
               PARAM_MODE="$1" \
-              PARAM_NO_CACHE='false' \
-              PARAM_OUTPUT_FORMAT='default' \
-              PARAM_PREVIEW='auto' \
-              PARAM_RESPECT_GITIGNORE='auto' \
               PARAM_TARGETS="$3" \
-              PARAM_TARGET_VERSION='default' \
-              PARAM_VERBOSITY='default' \
                 bash src/scripts/format.sh
             }
 
@@ -1073,18 +1123,8 @@ jobs:
       # snapshot catches a fixture that was left modified, or a file that was
       # left behind, either of which could let a later test pass for the
       # wrong reason.
-      - run:
-          name: Verify the fixtures are unchanged
-          command: |
-            set -euo pipefail
-
-            find tests -type f -print0 |
-              LC_ALL=C sort -z |
-              xargs -0 sha256sum > /tmp/fixtures-after.sha256
-
-            diff -u /tmp/fixtures-before.sha256 /tmp/fixtures-after.sha256
-
-            echo 'Every fixture matches the checkout.'
+      - verify-fixtures-unchanged:
+          after: the format tests
 
   # tests/arguments/regression.sh runs src/scripts/check.sh and format.sh
   # directly. This job ties those results to the published commands: it
@@ -1092,56 +1132,32 @@ jobs:
   # that 'check' and 'format' each consist of one step, that the step runs
   # exactly the script the tests ran, that every parameter is handed to it,
   # and that the script refuses input before it starts Ruff, including
-  # 'ruff --version', or writes a file.
+  # 'ruff --version', or writes a file. It also checks that the shared
+  # defaults those tests start from are the defaults of the packed commands.
   packed-command-tests:
     docker:
       - image: cimg/python:3.13
     steps:
       - checkout
-
-      - attach_workspace:
-          at: dist
-
-      # orb-tools/pack 12.5.0 persists the packed orb as orb_source.tar.gz at
-      # the root of the workspace, and the archive holds orb.yml. A plain
-      # orb.yml is accepted as well, and the step fails when neither is there.
-      - run:
-          name: Locate the packed orb
-          command: |
-            set -euo pipefail
-
-            while IFS= read -r archive; do
-              tar -xzf "${archive}" -C "$(dirname "${archive}")"
-            done < <(find dist -type f -name 'orb_source.tar.gz')
-
-            echo 'Files from the workspace:'
-            find dist -type f -print
-
-            packed="$(find dist -type f -name 'orb.yml' | LC_ALL=C sort | head -n 1)"
-
-            if [ -z "${packed}" ] || [ ! -s "${packed}" ]; then
-              echo 'The workspace holds no packed orb.yml'
-              exit 1
-            fi
-
-            cp "${packed}" /tmp/packed-orb.yml
-            echo "Commit: ${CIRCLE_SHA1:-unknown}"
-            sha256sum /tmp/packed-orb.yml
-
-      - run:
-          name: Install PyYAML
-          command: python -m pip install --quiet pyyaml==6.0.3
+      - locate-packed-orb
 
       - run:
           name: Verify the packed commands check their input before Ruff starts
           command: python tests/arguments/packed-commands.py /tmp/packed-orb.yml
 
+      - run:
+          name: Verify the shared defaults match the packed commands
+          command: python tests/defaults/compare.py /tmp/packed-orb.yml
+
+  # ruff/install on an image the job names itself, as a user who does not
+  # use the Orb's executor would run it. It does not test the 'image'
+  # parameter of ruff/default; executor-image-test does.
   install-tests:
     docker:
       - image: cimg/python:3.13
     steps:
       - checkout
-      - verify-fixtures
+      - record-fixtures
 
       - ruff/install:
           version: "0.16.2"
@@ -1154,22 +1170,88 @@ jobs:
             ruff --version
             ruff --version | grep -Fq "0.16.2"
 
+      - record-environment
+
       - ruff/check:
           targets: tests/clean
 
+      - verify-fixtures-unchanged
+
+  # ruff/default with an image other than its default, passed through the
+  # executor's 'image' parameter rather than written into the job. The
+  # resource class stays at the default. executor-comparison checks that the
+  # job ran the Python of that image.
+  executor-image-test:
+    executor:
+      name: ruff/default
+      image: cimg/python:3.13
+    steps:
+      - checkout
+      - record-fixtures
+
+      - ruff/install:
+          version: "0.16.2"
+
+      - record-environment
+
+      - persist_to_workspace:
+          root: /tmp
+          paths:
+            - environment/executor-image-test.json
+
+      - ruff/check:
+          targets: tests/clean
+
+      - verify-fixtures-unchanged
+
+  # ruff/default with a resource class other than its default, and the
+  # default image. executor-comparison checks the CPU and memory limits this
+  # job recorded against those of the jobs on the default resource class.
   resource-class-test:
     executor:
       name: ruff/default
       resource_class: medium
     steps:
       - checkout
-      - verify-fixtures
+      - record-fixtures
 
       - ruff/install:
           version: "0.16.2"
 
+      - record-environment
+
+      - persist_to_workspace:
+          root: /tmp
+          paths:
+            - environment/resource-class-test.json
+
       - ruff/check:
           targets: tests/clean
+
+      - verify-fixtures-unchanged
+
+  # Compares what the executor tests asked ruff/default for with what they
+  # recorded: the image through the Python version, and the resource class
+  # through the CPU and memory limits of the container. The executor's
+  # defaults come from the orb packed from this commit, and what each job
+  # asked for from this file. See tests/environment/compare.py.
+  executor-comparison:
+    docker:
+      - image: cimg/python:3.13
+    steps:
+      - checkout
+      - locate-packed-orb
+
+      - run:
+          name: Verify the executor tests ran on what they asked for
+          command: >-
+            python tests/environment/compare.py /tmp/packed-orb.yml
+            .circleci/test-deploy.yml dist/environment
+            /tmp/executor-comparison
+
+      - store_artifacts:
+          path: /tmp/executor-comparison
+          destination: executor-comparison
 
 workflows:
   test-deploy:
@@ -1186,6 +1268,9 @@ workflows:
       - install-tests:
           filters: *filters
 
+      - executor-image-test:
+          filters: *filters
+
       - resource-class-test:
           filters: *filters
 
@@ -1195,6 +1280,14 @@ workflows:
       - packed-command-tests:
           requires:
             - orb-tools/pack
+          filters: *filters
+
+      - executor-comparison:
+          requires:
+            - orb-tools/pack
+            - command-tests
+            - executor-image-test
+            - resource-class-test
           filters: *filters
 
       # The only job that publishes, and the only one that uses a context. It
@@ -1211,6 +1304,8 @@ workflows:
           requires:
             - orb-tools/pack
             - command-tests
+            - executor-comparison
+            - executor-image-test
             - format-tests
             - install-tests
             - packed-command-tests
