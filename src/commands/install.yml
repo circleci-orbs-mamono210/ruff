@@ -8,13 +8,19 @@ description: >
   selected with the 'selected_rules' parameter of 'ruff/check'.
 parameters:
   version:
-    default: ''
+    default: '0.16.2'
     description: >
-      Version of Ruff to install, for example '0.16.2'. Empty installs the
-      latest release. Pinning is strongly recommended, because Ruff is
-      pre-1.0 and a new release can add rules, promote preview rules to
-      stable or change formatter output, any of which can turn a green
-      pipeline red.
+      Version of Ruff to install, passed to pip as 'ruff==VERSION'. The
+      default, '0.16.2', is the version this release of the Orb is tested
+      with, and the behaviour its documentation describes as verified is
+      that of this version. Any other version, for example '0.16.1', is
+      installed as given.
+
+      An empty string installs the latest release instead, as an unset
+      version did before 1.0.0. That is not reproducible: Ruff is pre-1.0,
+      and a new release can add rules, promote preview rules to stable or
+      change formatter output, any of which can turn a green pipeline red.
+      The Orb's tests do not cover it.
     type: string
 steps:
   - run:

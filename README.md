@@ -55,12 +55,23 @@ Both `ruff/check` and `ruff/format` first check their input, then print the inst
 
 Ruff is pre-1.0 and its releases are not backward compatible in the way a stable tool's are. Version 0.16.0 raised the default rule set **from 59 rules to 413**, which turned many green pipelines red without any change to the repository under test.
 
-Pinning is therefore not a recommendation here so much as a requirement for a reproducible pipeline:
+`ruff/install` therefore pins Ruff by default. Without `version`, it installs Ruff 0.16.2, the version this release of the Orb is tested with, and what this README describes as verified is the behaviour of Ruff 0.16.2. A later release of the Orb may move the default to a newer Ruff after testing it, and the [changelog](https://github.com/circleci-orbs-mamono210/ruff/blob/main/CHANGELOG.md) says so.
+
+`version` installs any other release as given, for example to keep a version while upgrading the Orb:
 
 ```yaml
 - ruff/install:
     version: "0.16.2"
 ```
+
+An empty `version` installs the latest release, as an unset `version` did before 1.0.0:
+
+```yaml
+- ruff/install:
+    version: ""
+```
+
+That is not reproducible, and the Orb's tests do not cover it: a new Ruff release can add rules or change the formatter's output and turn a green pipeline red. The values that `target_version` and `output_format` accept are those of Ruff 0.16.2 as well. Another Ruff version may reject one of them, and the step then fails with exit 2.
 
 If a repository was configured against the older defaults, restoring them is a one-line change:
 
@@ -398,7 +409,7 @@ With `output_file`, `ruff/check` also exits 2 when the file cannot be prepared, 
 
 ## Upgrading from 0.0.1
 
-Two kinds of change separate 1.0.0 from 0.0.1: every parameter name made of several words was renamed, and a few bugs were fixed in ways that change what a step does.
+Three kinds of change separate 1.0.0 from 0.0.1: every parameter name made of several words was renamed, `ruff/install` installs a fixed Ruff version by default, and a few bugs were fixed in ways that change what a step does.
 
 ### Renamed parameters
 
@@ -437,8 +448,9 @@ The rename applies to the Orb's parameters only. Ruff's own command-line options
 
 ### Changed behaviour
 
-These are bug fixes, independent of the rename. Each links to the section that describes the current behaviour.
+These changes are independent of the rename. The first is a new default, the others are bug fixes. Each links to the section that describes the current behaviour.
 
+* `ruff/install` without `version` installs Ruff 0.16.2 instead of the latest release. Set `version: ""` to keep installing the latest release. See [Pin the Version](#pin-the-version).
 * `output_file` is emptied before Ruff runs, so a report left by an earlier run is no longer shown or stored when Ruff stops on an error. The step exits 2 when the file cannot be prepared. See [Report handling and exit status](#report-handling-and-exit-status).
 * `targets`, `extensions` and `extra_args` take every line, not only the first. `targets` is always a list of paths, so options written there are no longer applied. See [Choosing the Files](#choosing-the-files).
 * `fix: never` also passes `--no-fix-only`, and some `extra_args` items are refused before Ruff is started. See [Fixing](#fixing) and [Extra Arguments](#extra-arguments).
@@ -454,9 +466,9 @@ Using `python -m pip` ensures that Ruff is installed into the Python environment
 
 Ruff has no plugin system, so unlike the flake8 Orb there is no `plugins` parameter.
 
-| Parameter | Type   | Default | Description                                            |
-| --------- | ------ | ------- | ------------------------------------------------------ |
-| `version` | string | `""`    | Ruff version to install; empty installs the latest release |
+| Parameter | Type   | Default    | Description                                            |
+| --------- | ------ | ---------- | ------------------------------------------------------ |
+| `version` | string | `"0.16.2"` | Ruff version to install. The default is the version this release of the Orb is tested with; an empty string installs the latest release, which is not tested |
 
 ### `ruff/check`
 
@@ -575,6 +587,25 @@ circleci orb create orbss/ruff --no-prompt
 ```
 
 Production releases use Semantic Versioning tags. The `v1.0.0` tag publishes Orb version `1.0.0`. A tag in any other form runs the checks and tests but publishes nothing.
+
+### Updating the Ruff version
+
+Each release of the Orb is tested with one Ruff version, the one `ruff/install` installs by default. These places name it, and the integration tests fail until they agree:
+
+| Where | What |
+| ----- | ---- |
+| `src/commands/install.yml` | The default of `version` |
+| `.circleci/test-deploy.yml` | `ruff_version` at the top. Every job that installs Ruff installs this version: `command-tests` and `install-tests` install Ruff without a version and fail unless they get this one, the others name it |
+| `tests/arguments/check-parameters.py` and `tests/arguments/format-parameters.py` | `RUFF_VERSION`, the version their expected Ruff output is written for. They do not run their Ruff cases with another |
+
+Moving to another Ruff version changes what `ruff/install` gives everyone who does not set `version`, so make it a change of its own:
+
+1. Read Ruff's changelog for every release in between. Note changes to the default rule set, to the formatter's style, to the command-line options the commands use and to the values of `--output-format` and `--target-version`.
+2. Install the new version and compare `ruff check --help` and `ruff format --help` with `src/scripts/check.sh` and `src/scripts/format.sh`: every option the scripts pass must still exist and mean the same.
+3. Change the version in the three places above. Change the enums of `output_format` and `target_version` in `src/commands/check.yml` and `src/commands/format.yml` when Ruff's values changed: `verify-enums` in `check-parameter-tests` and `format-parameter-tests` fails while an enum has a value that Ruff does not list, or lacks one that it does.
+4. Run the integration tests. A failing fixture test, regression script or Ruff case of `check-parameters.py` and `format-parameters.py` shows a change in what Ruff does or prints. Decide for each whether the Orb or the expectation has to change.
+5. Search the repository for the old version, for example with `git grep -nF 0.16.2`, and update every text that names it as the tested version: this README, the command descriptions, the examples in `src/examples/`, the documents and comments under `tests/` and the comments of `.circleci/test-deploy.yml`. The entries of `CHANGELOG.md` for earlier releases keep the version they had.
+6. Weigh the effect on pipelines that do not set `version`: a larger default rule set or a new formatter style changes what they report. Describe it in the changelog and choose the Orb's version number to match.
 
 ### Checking the usage examples before a release tag
 

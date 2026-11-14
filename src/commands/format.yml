@@ -145,6 +145,9 @@ parameters:
       diff in 'diff' mode whatever the value, and no report in 'write' mode.
       'default' passes no flag, so Ruff's own default of 'full' applies, and
       'github' emits workflow annotations.
+      The other values are those Ruff 0.16.2 accepts. Another Ruff version,
+      installed with 'version' of ruff/install, may reject one, or the
+      option itself, and the step then fails with exit 2.
     enum: ["default", "concise", "full", "json", "json-lines", "junit",
            "grouped", "github", "gitlab", "pylint", "rdjson", "azure",
            "sarif"]
@@ -173,6 +176,9 @@ parameters:
       (ruff '--target-version'). 'default' passes no flag, so Ruff infers the
       version from 'requires-python' in 'pyproject.toml' and otherwise falls
       back to its own default.
+      The other values are those Ruff 0.16.2 accepts. Another Ruff version,
+      installed with 'version' of ruff/install, may reject one, and the step
+      then fails with exit 2.
     enum: ["default", "py37", "py38", "py39", "py310", "py311", "py312",
            "py313", "py314", "py315"]
     type: enum

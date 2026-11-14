@@ -6,6 +6,8 @@ PACKAGES=()
 if [ -n "${PARAM_VERSION}" ]; then
   PACKAGES+=("ruff==${PARAM_VERSION}")
 else
+  # Only an explicit empty 'version' gets here; the default names a version.
+  echo 'version is empty: installing the latest Ruff release, which this Orb is not tested with.'
   PACKAGES+=('ruff')
 fi
 

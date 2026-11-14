@@ -9,6 +9,14 @@ orbs:
   ruff: {}
   orb-tools: circleci/orb-tools@12.5.0
 
+# The Ruff version that the integration tests install and that their
+# expectations are written for. It is the default of 'version' of
+# ruff/install as well: command-tests and install-tests install Ruff
+# without a version and fail unless they get this one, and every other job
+# that installs Ruff names it. "Updating the Ruff version" in README.md
+# lists what else depends on it.
+ruff_version: &ruff_version "0.16.2"
+
 filters: &filters
   tags:
     only: /.*/
@@ -48,13 +56,13 @@ commands:
       Record the commit, the job, the image, Python, Ruff and the CPU and
       memory limits of this job in /tmp/environment/<job>.json, and store
       the record as an artifact. Run it after ruff/install. The step fails
-      unless Ruff is the version below, which every ruff/install step of
-      this file installs.
+      unless Ruff is the version below, 'ruff_version' at the top of this
+      file.
     parameters:
       ruff_version:
         description: The Ruff version the integration tests are pinned to.
         type: string
-        default: "0.16.2"
+        default: *ruff_version
     steps:
       - run:
           name: Record the execution environment
@@ -104,6 +112,99 @@ commands:
           name: Install PyYAML
           command: python -m pip install --quiet pyyaml==6.0.3
 
+  verify-enums:
+    description: >
+      Compare 'output_format' and 'target_version' of the packed command with
+      the values that the installed Ruff lists for '--output-format' and
+      '--target-version' in its help, both ways, and run Ruff with each value
+      on tests/clean. 'default' is the Orb's own value for passing nothing,
+      so it is not compared. Run it after locate-packed-orb and ruff/install.
+    parameters:
+      command:
+        description: The command whose enums are compared.
+        type: enum
+        enum: ["check", "format"]
+    steps:
+      - run:
+          name: Verify the enums of ruff/<< parameters.command >> against Ruff
+          environment:
+            COMMAND: << parameters.command >>
+          command: |
+            ruff --version
+            python3 -c '
+            import os
+            import re
+            import subprocess
+            import sys
+
+            import yaml
+
+            command = os.environ["COMMAND"]
+            with open("/tmp/packed-orb.yml", encoding="utf-8") as packed:
+                parameters = yaml.safe_load(packed)["commands"][command]["parameters"]
+
+            help_text = subprocess.run(
+                ["ruff", command, "--help"], capture_output=True, text=True, check=True
+            ).stdout
+            # Ruff with one value of an option, on files that need no change.
+            base = ["ruff", command, "--isolated", "--no-cache"]
+            if command == "format":
+                base.append("--check")
+            failures = []
+
+            for option, name in (
+                ("--output-format", "output_format"),
+                ("--target-version", "target_version"),
+            ):
+                # The help of one option ends where the next option starts.
+                start = help_text.find(f"\n      {option} <")
+                end = re.search(r"\n {2,6}-", help_text[start + 1 :])
+                block = help_text[start : start + 1 + end.start()] if end else ""
+                listed = re.search(r"\[possible values: ([^\]]*)\]", block)
+
+                if start < 0 or not listed:
+                    failures.append(f"ruff {command} --help lists no values of {option}")
+                    continue
+
+                ruff_values = [value.strip() for value in listed.group(1).split(",")]
+                enum = parameters[name]["enum"]
+                orb_values = [value for value in enum if value != "default"]
+                print(f"{name}: {enum}")
+                print(f"{option}: {ruff_values}")
+
+                if "default" not in enum:
+                    failures.append(f"{name} has no value default")
+
+                for value in sorted(set(orb_values) - set(ruff_values)):
+                    failures.append(f"{name}: Ruff does not list {value}")
+
+                for value in sorted(set(ruff_values) - set(orb_values)):
+                    failures.append(f"{name}: Ruff lists {value}, the enum does not")
+
+                for value in orb_values:
+                    run = subprocess.run(
+                        [*base, option, value, "--", "tests/clean"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+
+                    if run.returncode != 0:
+                        failures.append(
+                            f"{option} {value}: Ruff exited {run.returncode}: {run.stderr.strip()}"
+                        )
+
+            for failure in failures:
+                print(f"FAIL: {failure}")
+
+            if failures:
+                sys.exit(1)
+
+            print(
+                "Every value is one that Ruff lists, Ruff lists no other, and Ruff ran with each."
+            )
+            '
+
 jobs:
   # The published commands with their parameters at the defaults, apart from
   # what a step names, on ruff/default with its defaults as well. The
@@ -115,8 +216,10 @@ jobs:
       - checkout
       - record-fixtures
 
-      - ruff/install:
-          version: "0.16.2"
+      # The minimal configuration: ruff/install without a version installs
+      # its default, and record-environment fails unless that is
+      # 'ruff_version'.
+      - ruff/install
 
       - record-environment
 
@@ -214,7 +317,7 @@ jobs:
       - record-fixtures
 
       - ruff/install:
-          version: "0.16.2"
+          version: *ruff_version
 
       - record-environment
 
@@ -960,7 +1063,7 @@ jobs:
       - record-fixtures
 
       - ruff/install:
-          version: "0.16.2"
+          version: *ruff_version
 
       - record-environment
 
@@ -1455,7 +1558,7 @@ jobs:
       - locate-packed-orb
 
       - ruff/install:
-          version: "0.16.2"
+          version: *ruff_version
 
       - record-environment
 
@@ -1464,6 +1567,11 @@ jobs:
           command: >-
             python3 tests/arguments/check-parameters.py /tmp/packed-orb.yml
             --report /tmp/check-parameters
+
+      # The values of output_format and target_version must be the ones
+      # Ruff 'ruff_version' lists for 'ruff check'.
+      - verify-enums:
+          command: check
 
       - verify-fixtures-unchanged
 
@@ -1489,7 +1597,7 @@ jobs:
       - locate-packed-orb
 
       - ruff/install:
-          version: "0.16.2"
+          version: *ruff_version
 
       - record-environment
 
@@ -1498,6 +1606,11 @@ jobs:
           command: >-
             python3 tests/arguments/format-parameters.py /tmp/packed-orb.yml
             --report /tmp/format-parameters
+
+      # The values of output_format and target_version must be the ones
+      # Ruff 'ruff_version' lists for 'ruff format'.
+      - verify-enums:
+          command: format
 
       - verify-fixtures-unchanged
 
@@ -1508,6 +1621,12 @@ jobs:
   # ruff/install on an image the job names itself, as a user who does not
   # use the Orb's executor would run it. It does not test the 'image'
   # parameter of ruff/default; executor-image-test does.
+  #
+  # Without 'version', ruff/install must install 'ruff_version'. A version
+  # the step names must be installed as given, not replaced by the default.
+  # An explicit empty 'version' must ask pip for the latest release. That
+  # last case is checked on what pip is asked for, not by installing the
+  # latest release, which the Orb is not tested with.
   install-tests:
     docker:
       - image: cimg/python:3.13
@@ -1515,16 +1634,21 @@ jobs:
       - checkout
       - record-fixtures
 
-      - ruff/install:
-          version: "0.16.2"
+      - ruff/install
 
       - run:
-          name: Verify the pinned version was installed
+          name: Verify ruff/install without a version installed ruff_version
+          environment:
+            RUFF_VERSION: *ruff_version
           command: |
             set -euo pipefail
 
             ruff --version
-            ruff --version | grep -Fq "0.16.2"
+
+            if [ "$(ruff --version)" != "ruff ${RUFF_VERSION}" ]; then
+              echo "Expected ruff ${RUFF_VERSION}, the default of 'version'."
+              exit 1
+            fi
 
       - record-environment
 
@@ -1532,6 +1656,66 @@ jobs:
           targets: tests/clean
 
       - verify-fixtures-unchanged
+
+      # The steps below replace the Ruff the job installed, so they come
+      # last. 0.16.1 is any release other than the default.
+      - ruff/install:
+          version: "0.16.1"
+
+      - run:
+          name: Verify a version the step names is installed as given
+          command: |
+            set -euo pipefail
+
+            ruff --version
+
+            if [ "$(ruff --version)" != 'ruff 0.16.1' ]; then
+              echo 'Expected ruff 0.16.1, the version the step named.'
+              exit 1
+            fi
+
+      # A stand-in for 'python' records what ruff/install asks pip for and
+      # installs nothing. BASH_ENV puts it first on PATH for every later
+      # step of the job.
+      - run:
+          name: Put a stand-in for python first on PATH
+          command: |
+            set -euo pipefail
+
+            mkdir -p /tmp/python-stand-in
+            printf '%s\n' \
+              '#!/bin/bash' \
+              'printf "%s\n" "$*" >> /tmp/python-stand-in/calls' \
+              > /tmp/python-stand-in/python
+            chmod +x /tmp/python-stand-in/python
+            echo "export PATH=\"/tmp/python-stand-in:\${PATH}\"" >> "${BASH_ENV}"
+
+      - ruff/install:
+          version: ""
+
+      - ruff/install
+
+      - run:
+          name: Verify an empty version asks pip for the latest release
+          environment:
+            RUFF_VERSION: *ruff_version
+          command: |
+            set -euo pipefail
+
+            echo 'pip was asked for:'
+            cat /tmp/python-stand-in/calls
+
+            expected="$(
+              printf '%s\n' \
+                '-m pip install --upgrade ruff' \
+                "-m pip install --upgrade ruff==${RUFF_VERSION}"
+            )"
+
+            if [ "$(cat /tmp/python-stand-in/calls)" != "${expected}" ]; then
+              echo 'Expected ruff without a version for version: "",'
+              echo "then ruff==${RUFF_VERSION} for the default."
+              exit 1
+            fi
 
   # ruff/default with an image other than its default, passed through the
   # executor's 'image' parameter rather than written into the job. The
@@ -1546,7 +1730,7 @@ jobs:
       - record-fixtures
 
       - ruff/install:
-          version: "0.16.2"
+          version: *ruff_version
 
       - record-environment
 
@@ -1572,7 +1756,7 @@ jobs:
       - record-fixtures
 
       - ruff/install:
-          version: "0.16.2"
+          version: *ruff_version
 
       - record-environment
 

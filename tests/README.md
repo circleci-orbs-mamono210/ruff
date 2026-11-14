@@ -354,7 +354,7 @@ as the artifact `environment/<job>.json`. It holds:
   and the operating system. The `Spin up environment` step of the job,
   behind the job URL, names the image that was started;
 - the output of `ruff --version` and the path of Ruff. The step fails unless
-  it is `ruff 0.16.2`, the version every `ruff/install` step installs;
+  it is `ruff 0.16.2`, `ruff_version` of `.circleci/test-deploy.yml`;
 - the CPU and memory limits of the container, read from its cgroup
   (`cpu.max` and `memory.max` on cgroup v2), and the CPU count and memory of
   the host, which a resource class does not change.
