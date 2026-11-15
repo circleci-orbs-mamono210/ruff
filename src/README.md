@@ -1,26 +1,25 @@
 # Orb Source
 
-Orbs are shipped as individual `orb.yml` files, however, to make development easier, it is possible to author an orb in _unpacked_ form, which can be _packed_ with the CircleCI CLI and published.
+This directory holds the Orb in unpacked form. `orb-tools/pack` packs it into a single `orb.yml` with `circleci orb pack`, the integration tests run that packed Orb, and a release tag publishes it. "Development" in the [README](../README.md#development) describes the pipeline and the release steps.
 
-The default `.circleci/config.yml` file contains the configuration code needed to automatically pack, test, and deploy any changes made to the contents of the orb source in this directory.
+| Path | Content |
+| ---- | ------- |
+| `@orb.yml` | The Orb's `version`, `description` and `display.source_url` |
+| `commands/` | `install`, `check` and `format`: their parameters, descriptions and steps, as the Orb Registry shows them |
+| `scripts/` | `install.sh`, `check.sh` and `format.sh`, which the commands include with `<<include(scripts/NAME.sh)>>` |
+| `executors/` | `default`, the Python executor |
+| `examples/` | The usage examples the Orb Registry shows |
 
-## @orb.yml
+## Commands and scripts
 
-This is the entry point for our orb "tree", which becomes our `orb.yml` file later.
+Each command passes its parameters to its script as `PARAM_*` environment variables, for example `output_file` as `PARAM_OUTPUT_FILE`. Parameter names use underscores, which the review check RC010 requires. The variable names did not change with the rename in 1.0.0.
 
-Within the `@orb.yml` we generally specify 4 configuration keys
+When a parameter or a default changes, change these as well:
 
-**Keys**
+* `tests/defaults/check.sh` or `tests/defaults/format.sh`. The `packed-command-tests` job compares them with the packed commands.
+* The parameter tables in the README.
+* `tests/arguments/check-parameters.md` or `tests/arguments/format-parameters.md`, which list where each parameter is tested.
 
-1. **version**
-    Specify version 2.1 for orb-compatible configuration `version: 2.1`
-2. **description**
-    Give your orb a description. Shown within the CLI and orb registry
-3. **display**
-    Specify the `home_url` referencing documentation or product URL, and `source_url` linking to the orb's source repository.
-4. **orbs**
-    (optional) Some orbs may depend on other orbs. Import them here.
+## Usage examples
 
-## See:
- - [Orb Author Intro](https://circleci.com/docs/2.0/orb-author-intro/#section=configuration)
- - [Reusable Configuration](https://circleci.com/docs/2.0/reusing-config)
+Every file in `examples/` references the Orb as `orbss/ruff@1.0.0`. The review check RC011 requires the major version of the release tag there, and it only runs in the pipeline of a `vX.Y.Z` tag. The examples are meant for use once that version is published. Before that, try one with the Orb packed from the same commit; "Development" in the README describes both.

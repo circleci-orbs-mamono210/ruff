@@ -1,0 +1,33 @@
+---
+description: >
+  Override individual settings without editing the project's config file.
+  Each line of 'config_overrides' is passed as its own '--config' argument
+  and wins over the config file. Both commands get the same line length,
+  because the linter and the formatter are configured separately. Set the
+  line length either in 'config_overrides' or in 'line_length', not in both:
+  when both set it, ruff/check uses the value from 'config_overrides' and
+  ruff/format the one from 'line_length'.
+usage:
+  version: 2.1
+  orbs:
+    ruff: orbss/ruff@1.0.0
+  jobs:
+    execute-ruff:
+      executor: ruff/default
+      steps:
+        - checkout
+        - ruff/install
+        - ruff/check:
+            config_overrides: |
+              line-length = 100
+              lint.extend-select = ["E501"]
+            targets: src tests
+        - ruff/format:
+            config_overrides: |
+              line-length = 100
+              format.quote-style = "single"
+            targets: src tests
+  workflows:
+    use-my-orb:
+      jobs:
+        - execute-ruff

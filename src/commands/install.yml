@@ -1,7 +1,9 @@
 ---
 description: >
   Install Ruff with pip. Only needed when the executor image does not bundle
-  Ruff already, for example when running on 'cimg/python'.
+  Ruff already, for example when running on 'cimg/python'. Without
+  'version' it installs Ruff 0.16.2, the version this release of the Orb is
+  tested with, as in the 'minimal' example.
 
   Ruff has no plugin system, so unlike flake8 there is nothing to install
   alongside it. Every rule Ruff can report is built into the binary and is

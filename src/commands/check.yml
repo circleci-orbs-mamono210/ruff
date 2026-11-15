@@ -1,6 +1,13 @@
 ---
 description: >
-  Execute 'ruff check', the Ruff linter.
+  Execute 'ruff check', the Ruff linter. Run ruff/install first.
+
+  With the defaults it checks the working directory recursively with Ruff's
+  default rule set, passes '--no-fix --no-fix-only' (see 'fix') and fails
+  the step when Ruff reports a violation. The 'minimal' example shows the
+  smallest configuration, 'report' keeps a JSON report as an artifact,
+  'overrides' sets individual settings with 'config_overrides', and
+  'migration' moves a repository over from flake8 and isort.
 parameters:
   cache_dir:
     default: ''
@@ -34,9 +41,11 @@ parameters:
       Newline separated list of TOML 'KEY = VALUE' pairs, each passed as its
       own ruff '--config' argument, for example
       'lint.dummy-variable-rgx = "^_$"'. These take precedence over every
-      config file, including one named by 'config_file'. One pair per line,
-      because a TOML pair contains whitespace and cannot be split on it.
-      Blank lines are ignored.
+      config file, including one named by 'config_file'. A parameter that
+      passes a flag, such as 'selected_rules', wins over the same setting
+      here, and when two lines set the same key the first one wins. One pair
+      per line, because a TOML pair contains whitespace and cannot be split
+      on it. Blank lines are ignored.
     type: string
   diff:
     default: false
@@ -44,9 +53,11 @@ parameters:
       Print the diff each fix would produce instead of applying it
       (ruff '--diff'). Implies '--fix-only', so no violation report is
       printed, and the step fails when any diff exists unless 'exit_zero' is
-      set. The diff goes to the job log even when 'output_file' is set; the
-      file then only receives Ruff's summary line. Use it to show what 'fix'
-      would change.
+      set. A violation that has no fix produces no diff, so with Ruff 0.16.2
+      a step whose files have only such violations exits 0. The diff goes to
+      the job log even when 'output_file' is set; the file then only
+      receives Ruff's summary line. Use it to show what 'fix' would change,
+      next to a gating run without it.
     type: boolean
   excluded_paths:
     default: ''
@@ -68,8 +79,10 @@ parameters:
     description: >
       Exit with 0 even when Ruff reports violations (ruff '--exit-zero').
       Configuration errors and command line errors still fail the step,
-      because Ruff exits 2 for those. A path that does not exist is reported
-      as a violation and exits 1, so it IS masked by this option.
+      because Ruff exits 2 for those. So do an input this command refuses
+      (exit 1) and an 'output_file' it cannot prepare (exit 2). A path that
+      does not exist is reported as a violation and exits 1, so it IS masked
+      by this option.
     type: boolean
   extend_excluded_paths:
     default: ''
@@ -198,8 +211,10 @@ parameters:
       '--config "line-length = N"' override. Empty keeps Ruff's default of
       88 or the value from the config file. Note that the line length limit
       is only REPORTED when rule 'E501' is selected, which Ruff's default
-      rule set does not include; it also affects how other rules and the
-      formatter wrap code.
+      rule set does not include; it also changes what other rules expect,
+      such as where 'I001' wants a long import wrapped. It does not reach
+      ruff/format. A 'line-length' in 'config_overrides' wins over this
+      value, because it is passed first.
     type: string
   no_cache:
     default: false
@@ -212,9 +227,11 @@ parameters:
     default: ''
     description: >
       Write the report to this path so it can be stored as an artifact
-      (ruff '--output-file'). Ruff creates the parent directories, truncates
-      an existing file and never writes colour into it. Ruff sends nothing to
-      the job log while this is set, so see the 'tee' parameter.
+      (ruff '--output-file'). Before Ruff runs, this command creates the
+      parent directory and empties the file, so the file only holds what the
+      current run wrote; when that fails, the step exits 2 without running
+      Ruff. Ruff never writes colour into the file and sends nothing of the
+      report to the job log while this is set, so see the 'tee' parameter.
     type: string
   output_format:
     default: default

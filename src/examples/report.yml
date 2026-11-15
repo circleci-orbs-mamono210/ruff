@@ -1,14 +1,19 @@
 ---
 description: >
   Keep the report as a build artifact and still fail the job. The reporting
-  run uses 'exit_zero' so the artifact is stored even when Ruff finds
-  violations, and the second run is the one that decides whether the job
-  passes. Ruff never writes colour into 'output_file', so the artifact stays
-  free of ANSI escape sequences without any extra setting.
+  run uses 'exit_zero', so the violations it reports do not fail it and the
+  job goes on to the second run, which decides whether the job passes.
+  'exit_zero' does not decide whether the report is stored: CircleCI runs
+  'store_artifacts' even after an earlier step failed, but not when the job
+  is cancelled or reaches its time limit, and it may skip an empty file. A
+  configuration error, an input the Orb refuses or a report file it cannot
+  prepare still fails the reporting run. Ruff never writes colour into
+  'output_file', so the artifact stays free of ANSI escape sequences without
+  any extra setting.
 usage:
   version: 2.1
   orbs:
-    ruff: orbss/ruff@x.y.z
+    ruff: orbss/ruff@1.0.0
   jobs:
     execute-ruff:
       executor: ruff/default

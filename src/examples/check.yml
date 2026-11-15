@@ -1,0 +1,25 @@
+---
+description: >
+  Check the checked out code with Ruff's default rule set and print a count
+  per rule instead of the individual violations. The job fails as soon as
+  Ruff reports a violation. 'fix: never', the default, passes '--no-fix' and
+  '--no-fix-only', so with Ruff 0.16.2 the linter applies no fixes even if
+  the project config enables fixing; see the 'fix' parameter for what that
+  covers.
+usage:
+  version: 2.1
+  orbs:
+    ruff: orbss/ruff@1.0.0
+  jobs:
+    execute-ruff:
+      executor: ruff/default
+      steps:
+        - checkout
+        - ruff/install:
+            version: 0.16.2
+        - ruff/check:
+            statistics: true
+  workflows:
+    use-my-orb:
+      jobs:
+        - execute-ruff

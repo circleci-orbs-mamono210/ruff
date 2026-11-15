@@ -8,6 +8,12 @@ default rule set changed substantially in 0.16.0, so an unpinned Ruff would
 change what these fixtures report and make the assertions fail for reasons
 unrelated to the orb.
 
+The jobs do not run the usage examples in `src/examples/` or in the README.
+They test the commands those examples use, with the parameters set on these
+fixtures. The review check RC011 checks the Orb references of the examples
+for a release tag, and "Development" in the README describes how to try an
+example with the Orb packed from a commit.
+
 - `clean/compliant.py` reports no violations under Ruff's default rule set and
   is already formatted, so both `ruff/check` and `ruff/format` must pass on it
   with the default parameters. It reports exactly four `E501` lines at

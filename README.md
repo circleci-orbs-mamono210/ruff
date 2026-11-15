@@ -24,21 +24,20 @@ https://circleci.com/developer/orbs/orb/orbss/ruff
 
 ## Quick Start
 
-The default executor uses a CircleCI Python convenience image. Ruff is not preinstalled, so run `ruff/install` before `ruff/check`.
+The default executor uses a CircleCI Python convenience image. Ruff is not preinstalled, so run `ruff/install` before `ruff/check`. This is the minimal configuration:
 
 ```yaml
 version: 2.1
 
 orbs:
-  ruff: orbss/ruff@0.0.1
+  ruff: orbss/ruff@1.0.0
 
 jobs:
   execute-ruff:
     executor: ruff/default
     steps:
       - checkout
-      - ruff/install:
-          version: "0.16.2"
+      - ruff/install
       - ruff/check
 
 workflows:
@@ -47,9 +46,11 @@ workflows:
       - execute-ruff
 ```
 
-By default, `ruff/check` checks the current working directory recursively and the job fails when any violation is reported.
+`ruff/install` installs Ruff 0.16.2, the version this release of the Orb is tested with; see [Pin the Version](#pin-the-version). `ruff/check` then checks the current working directory recursively with Ruff's default rule set, and the job fails when any violation is reported.
 
 Both `ruff/check` and `ruff/format` first check their input, then print the installed Ruff version using `ruff --version`, and then run Ruff, all in one step. A step whose input is refused does not start Ruff at all; see [Extra Arguments](#extra-arguments).
+
+The examples in this README and in `src/examples/` reference `orbss/ruff@1.0.0`, the release they describe, and are meant for use once that version is published in the Orb Registry. Until then, the same source can only be used as an inline Orb, which is how this repository's pipeline tests it; see [Development](#development).
 
 ## Pin the Version
 
@@ -80,22 +81,32 @@ If a repository was configured against the older defaults, restoring them is a o
     selected_rules: E4,E7,E9,F
 ```
 
+With Ruff 0.16.2 this selects the same 59 rules that Ruff 0.15 enabled by default.
+
 ## Coming from flake8 and isort
 
-Ruff replaces flake8, isort and Black with a single binary, so an Orb that mirrors the flake8 Orb one-to-one would misrepresent the tool. The differences worth planning around:
+Ruff can take over the work of flake8, isort and Black with a single binary, so an Orb that mirrors the flake8 Orb one-to-one would misrepresent the tool. The differences worth planning around, as of flake8 7.5.0 and Ruff 0.16.2:
 
 | Topic | flake8 | Ruff |
 | ----- | ------ | ---- |
 | Plugins | Separate pip packages | None; every rule is built in and selected with `selected_rules` |
-| Default rules | pycodestyle, pyflakes, mccabe | 413 rules across 34 categories since 0.16.0 |
-| Line length | `E501` on by default | `E501` is **not** in the default set; add it with `extend_selected_rules` |
-| Import sorting | `isort` as a separate tool | `I` rules, in the default set since 0.16.0 |
+| Default rules | pycodestyle and pyflakes, plus mccabe once `max-complexity` is set | 413 rules from 34 linters; 59 in Ruff 0.15 |
+| Line length | `E501` on by default, at 79 | `E501` is **not** in the default set; add it with `extend_selected_rules` |
+| Import sorting | `isort` as a separate tool | `I001`, in the default set since Ruff 0.16.0 |
 | Formatting | Black as a separate tool | `ruff/format` |
-| Per-file ignores | Whitespace-separated pairs | Comma-separated pairs, one rule code each |
+| Per-file ignores | `pattern:CODE,CODE` pairs, separated by whitespace | Comma-separated `pattern:CODE` pairs, one code each; `pattern:F401,E501` is a configuration error |
 | Config file | `setup.cfg`, `tox.ini`, `.flake8` | `pyproject.toml`, `ruff.toml`, `.ruff.toml` |
 | Ignored files | Its own exclusion list | Also honours `.gitignore` by default |
 
-A staged migration usually gates on a narrow set first and reports on the full one:
+A migration that keeps each change reviewable usually goes like this:
+
+1. Replace the flake8 and isort steps with `ruff/install` and `ruff/check`, and a Black step with `ruff/format`.
+2. Gate on a narrow set first: `E4,E7,E9,F`, the rules Ruff 0.15 enabled by default, plus `E501` and `I` for what flake8's line length check and isort covered. Set `line_length` to flake8's `max-line-length`.
+3. Move the settings that matter. `extend-ignore` becomes `ignored_rules`, `per-file-ignores` becomes `per_file_ignores` in Ruff's form, `exclude` becomes `extend_excluded_paths`, and isort's settings go under `[tool.ruff.lint.isort]` in a Ruff configuration file. Ruff does not read flake8's or isort's settings: with Ruff 0.16.2, `max-line-length` in the `[flake8]` section of `setup.cfg` has no effect.
+4. Report on Ruff's default set in a second step that does not gate on violations, and store the report.
+5. Widen the gate once the report is manageable.
+
+Steps 2 and 4 look like this:
 
 ```yaml
 - ruff/check:
@@ -114,7 +125,11 @@ A staged migration usually gates on a narrow set first and reports on the full o
     path: reports
 ```
 
-The second step never fails the job. It exists to show how much work adopting the full rule set would be.
+The second step shows how much work adopting Ruff's default set would be. `exit_zero` keeps the violations it reports from failing it, but it still fails on a configuration or command-line error (exit 2), on an input the Orb refuses (exit 1) and when `output_file` cannot be prepared (exit 2); see [Exit Codes](#exit-codes). It runs only when the first step passed, because CircleCI skips the ordinary steps after a failed one. `store_artifacts` runs either way.
+
+With Ruff 0.16.2 the default set does not contain all of the old one: 18 rules of `E4,E7,E9,F`, among them `E402`, `E731` and `F403`, are left out. The report of the second step therefore does not show them, and a gate that moves to the default set later drops them unless `extend_selected_rules` adds them back.
+
+The Orb's own tests check how its parameters reach Ruff, on the Orb's test files. They do not compare Ruff's findings with those of flake8 or isort. A Ruff rule with the same code as a flake8 check is Ruff's own implementation and can report differently, so compare the reports on your own code before removing the old steps. Ruff honours flake8-style `# noqa` and `# noqa: CODE` comments.
 
 ## Linting
 
@@ -130,7 +145,7 @@ The second step never fails the job. It exists to show how much work adopting th
 
 `selected_rules` **replaces** the selection, so prefer `extend_selected_rules` when the intent is to add rules. `ignored_rules` is applied after the selection and removes rules that either of them turned on.
 
-`line_length` is passed as a `--config "line-length = N"` override rather than as a command-line flag, because `ruff check --line-length` is absent from Ruff's help output and is not part of its documented interface. Note that the limit is only *reported* when `E501` is selected; on its own it affects how other rules and the formatter wrap code.
+`line_length` is passed as a `--config "line-length = N"` override rather than as a command-line flag, because `ruff check --line-length` is absent from the help output of Ruff 0.16.2 and is not part of its documented interface. The limit is only *reported* when `E501` is selected. On its own it still changes what other rules expect, for example where `I001` wants a long import wrapped. It does not reach `ruff/format`, which takes its own `line_length`. When `config_overrides` sets `line-length` as well, the value from `config_overrides` wins; see [Which setting wins](#which-setting-wins).
 
 ### Per-file ignores
 
@@ -169,7 +184,7 @@ The list form used in a config file, `"tests/*" = ["S101", "F401"]`, is not acce
 
 Neither `check` nor `diff` rewrites the files it is given. This is verified with Ruff 0.16.2 for runs set up through the Orb's own parameters, including settings that come from a configuration file or from `config_overrides`. It does not cover `extra_args` or other Ruff versions, and Ruff's cache is still written.
 
-`line_length` is a first-class formatter flag here. Keep it in step with the `line_length` given to `ruff/check`, because the two commands configure it independently.
+`line_length` is a first-class formatter flag here. Keep it in step with the `line_length` given to `ruff/check`, because the two commands configure it independently. Unlike in `ruff/check`, it wins over a `line-length` in `config_overrides`; see [Which setting wins](#which-setting-wins).
 
 ## Configuration Files
 
@@ -219,6 +234,15 @@ Ruff draws the line at files, not at settings, so `config_overrides` and `line_l
     line_length: "100"
 ```
 
+### Which setting wins
+
+When two places set the same thing, Ruff 0.16.2 resolves it as follows, run through the Orb's commands:
+
+* `config_overrides` wins over the configuration file, including one named by `config_file`.
+* A parameter that passes a command-line flag wins over the same setting in `config_overrides`: `selected_rules`, which passes `--select`, over `lint.select`, and `line_length` of `ruff/format`, which passes `--line-length`, over `line-length`.
+* When `config_overrides` sets the same key on two lines, the first line wins.
+* `line_length` of `ruff/check` is itself a `--config` override, passed after the lines of `config_overrides`. When both set the line length, `ruff/check` therefore uses the value from `config_overrides`, while `ruff/format` uses `line_length`. Set the line length in one place only.
+
 ## Choosing the Files
 
 `targets` names the files and directories that `ruff/check` and `ruff/format` work on. Separate the items with spaces, tabs or newlines, so a YAML block with one path per line works:
@@ -237,6 +261,7 @@ Both commands read `targets` the same way:
 * Every item is a path. The paths are passed after `--`, and a relative path that starts with `-` or `@` is passed as `./<path>`. A file named `-`, `--help` or `@args` is therefore checked or formatted as that file; it never makes Ruff read standard input, run an option or expand an argument file. Absolute paths and other relative paths are passed unchanged.
 * Nothing is evaluated. Quotes, backslashes, `$`, `~` and glob characters reach Ruff as they are, so `"my file.py"` is the two paths `"my` and `file.py"`. Ruff does not expand glob characters either, so name a directory rather than a pattern such as `src/*.py`.
 * A path that contains whitespace cannot be given. Name a directory that contains it instead.
+* A path that does not exist is passed on like any other. With Ruff 0.16.2, `ruff/check` reports it as `E902` and exits 1, which `exit_zero` turns into 0, and `ruff/format` exits 2 in every mode.
 * Options do not belong in `targets`. Pass them through `extra_args`.
 
 `extensions` is split the same way, and each `extension:language` mapping is passed as its own `--extension`:
@@ -252,7 +277,7 @@ Version 0.0.1 read `targets` and `extensions` only up to the first newline, so e
 
 ## Excluding Paths
 
-`extend_excluded_paths` adds to Ruff's built-in exclusions, which already cover `.git`, `__pycache__`, `.venv`, `node_modules` and similar directories.
+`extend_excluded_paths` adds to Ruff's built-in exclusions, which in Ruff 0.16.2 cover `.git`, `.venv`, `venv`, `dist`, `node_modules` and similar directories.
 
 ```yaml
 - ruff/check:
@@ -289,6 +314,10 @@ To see what fixing *would* change, use `diff`. Ruff then prints the fixes instea
 - ruff/check:
     diff: true
 ```
+
+`diff` shows fixes, not violations. With Ruff 0.16.2 a violation that has no fix, such as `F821`, produces no diff, so a step whose files have only such violations exits 0. Keep a gating `ruff/check` without `diff`.
+
+With `output_file` as well, the diff still goes to the job log, and the file receives only Ruff's summary, for example `Would fix 1 error.`. When there is nothing to fix, the file stays empty. With `tee: true` the Orb prints the summary after the diff. The step exits 1 when there is something to fix, unless `exit_zero` is set.
 
 `fix_only: true` asks Ruff to rewrite files, which `fix: never` forbids. The Orb refuses that combination before Ruff is started rather than modifying files a job was told to leave alone; set `fix` explicitly when a fixing run is intended.
 
@@ -329,7 +358,12 @@ The rule looks at each item on its own, by its exact text:
 * Combined short options such as `-ne`, and `NAME=VALUE` forms such as `--output-file=x`, are not taken apart or interpreted.
 * An item that starts with `@` is refused even where Ruff would read it as the value of another option.
 
-Being accepted is not a guarantee. An extra argument can still override a parameter, skip checks, change the exit status or send output elsewhere; Ruff decides how the arguments combine, and the Orb does not try to rule that out.
+Being accepted is not a guarantee. An extra argument can still override a parameter, skip checks, change the exit status or send output elsewhere; Ruff decides how the arguments combine, and the Orb does not try to rule that out. With Ruff 0.16.2, for example:
+
+* `--show-settings` replaces the check. Ruff prints its settings, and the step exits 0 even when the files have violations.
+* `--exit-zero` turns reported violations into success, like `exit_zero`.
+* `--output-file elsewhere.txt` sends the report to that file, and nothing of it reaches the job log. Together with `output_file`, Ruff exits 2, because it accepts the option only once.
+* `--check` in `ruff/format` with `mode: write` makes the step report instead of rewriting.
 
 Version 0.0.1 read `extra_args` only up to the first newline and passed every item on. Under `fix: never` it also passed `--no-fix` alone, so `fix-only = true` in a configuration, or `--fix` in `extra_args`, made the linter rewrite files.
 
@@ -341,7 +375,7 @@ Use `output_file` to write the report to a file. Before Ruff starts, the Orb cre
 version: 2.1
 
 orbs:
-  ruff: orbss/ruff@0.0.1
+  ruff: orbss/ruff@1.0.0
 
 jobs:
   execute-ruff:
@@ -369,7 +403,7 @@ workflows:
       - execute-ruff
 ```
 
-`exit_zero: true` prevents the reporting step from stopping the job when violations are found, so the artifact is stored. The second run is the one that decides whether the job passes.
+`exit_zero: true` keeps the violations it reports from failing the reporting step, so the job goes on to the ordinary steps after it, among them the second run, which decides whether the job passes. Without it, a violation would end the job at the reporting step, because CircleCI skips the ordinary steps after a failed one. `exit_zero` does not decide whether the report is stored: CircleCI runs `store_artifacts` even after an earlier step failed, but not when the job is cancelled or reaches its time limit. That the step runs does not mean every file is stored either; CircleCI may skip an empty file. A configuration error, an input the Orb refuses or a report file it cannot prepare still fails the reporting step; see [Exit Codes](#exit-codes).
 
 Ruff writes to the file **instead of** standard output and has no `--tee` of its own, so the Orb prints the file back to the job log afterwards. The `tee` parameter, which defaults to `true`, controls that. Because Ruff never writes colour into the file, the log copy is always uncoloured; use `color: always` on the gating run instead, where CircleCI renders ANSI escape sequences even though the log is not a TTY.
 
@@ -389,7 +423,7 @@ Ruff leaves `output_file` untouched when it stops on a configuration or command-
 
 With `tee: false` the Orb neither prints nor reads the report, so the last two rows do not apply.
 
-The Orb never changes a non-zero status from Ruff, so printing the report cannot hide a failure. The status 2 for a file that cannot be prepared matches what Ruff itself returns when it cannot create the output file. In that case the Orb does not delete the file, so a later step that stores the path regardless of the failure, for example with `when: always`, stores whatever the file already held.
+The Orb never changes a non-zero status from Ruff, so printing the report cannot hide a failure. The status 2 for a file that cannot be prepared matches what Ruff itself returns when it cannot create the output file. In that case the Orb does not delete the file. A later `store_artifacts` step, which CircleCI runs even after the failed step, can therefore store whatever the file already held, including a report from an earlier run.
 
 ## Exit Codes
 
@@ -401,11 +435,23 @@ The Orb never changes a non-zero status from Ruff, so printing the report cannot
 
 A step also exits 1, before Ruff is started, when the Orb refuses its input: an item in `extra_args` that is [not accepted](#extra-arguments), or `fix_only: true` together with `fix: never`.
 
-`exit_zero` applies to reported violations only, so a broken configuration keeps failing the step. Note that a path which does not exist is reported as a violation and exits 1, so `exit_zero` **does** mask it. A reporting step that uses `exit_zero` should therefore always be paired with a gating step that does not.
+`exit_zero` turns reported violations into success, and nothing else. With Ruff 0.16.2, `ruff/check` exits as follows:
 
-With `output_file`, `ruff/check` also exits 2 when the file cannot be prepared, in which case Ruff is not run, and when Ruff exited 0 but `tee` cannot read the report back. A non-zero status from Ruff is always passed through unchanged. See [Report handling and exit status](#report-handling-and-exit-status).
+| Situation | Without `exit_zero` | With `exit_zero` |
+| --------- | ------------------- | ---------------- |
+| Violations reported | 1 | 0 |
+| A path in `targets` that does not exist, reported as `E902` | 1 | 0 |
+| `diff: true` with something to fix | 1 | 0 |
+| A `config_file` that does not exist, or a line of `config_overrides` that is not a valid setting | 2 | 2 |
+| An option Ruff does not know, given in `extra_args` | 2 | 2 |
+| An input the Orb refuses; Ruff is not started | 1 | 1 |
+| `output_file` cannot be prepared; Ruff is not run | 2 | 2 |
 
-`ruff format` has no `--exit-zero`. In `check` and `diff` mode it exits 1 when a file would be reformatted.
+Because a path that does not exist counts as a violation, `exit_zero` **does** mask a mistyped target. A reporting step that uses `exit_zero` should therefore always be paired with a gating step that does not.
+
+With `output_file`, `ruff/check` also exits 2 when Ruff exited 0 but `tee` cannot read the report back. A non-zero status from Ruff is always passed through unchanged. See [Report handling and exit status](#report-handling-and-exit-status).
+
+`ruff format` has no `--exit-zero`. In `check` and `diff` mode it exits 1 when a file would be reformatted, and in every mode it exits 2 for a path that does not exist.
 
 ## Upgrading from 0.0.1
 
@@ -587,6 +633,20 @@ circleci orb create orbss/ruff --no-prompt
 ```
 
 Production releases use Semantic Versioning tags. The `v1.0.0` tag publishes Orb version `1.0.0`. A tag in any other form runs the checks and tests but publishes nothing.
+
+### Releasing
+
+A release is a `vX.Y.Z` tag on a commit of `main` whose pipeline has passed. Before creating the tag:
+
+1. Give the release its own section in `CHANGELOG.md`, with the date of the release, and keep the sections of earlier releases as they are. Point the comparison link of `[Unreleased]` at the new tag, and add a link for the release that compares it with the previous tag, for example `v0.0.1...v1.0.0`. A link to a tag that does not exist yet only works once the tag is pushed.
+2. Make the Orb references in this README and in `src/examples/` name the release, for example `orbss/ruff@1.0.0`. Leave the old parameter names in "Upgrading from 0.0.1" and the history in `CHANGELOG.md` alone.
+3. When the Ruff version changes, follow [Updating the Ruff version](#updating-the-ruff-version).
+4. Run RC011 under the conditions of the planned tag; see [Checking the usage examples before a release tag](#checking-the-usage-examples-before-a-release-tag).
+5. Push the tag to the final commit, the one that adds the date to `CHANGELOG.md`, once its pipeline has passed. Do not tag an earlier commit whose pipeline passed. `orb-tools/publish` publishes the Orb only after every other job of the tag's pipeline has passed. Nothing deletes or moves the tag automatically, so after a failure, look at the tag, the pipeline and the registry before doing anything else.
+
+### Trying an example before it is published
+
+The examples name a version that is only in the registry once it is published. Before that, try one with the Orb packed from the commit instead: pack it with `circleci orb pack src > orb.yml`, and put the content of `orb.yml` under `orbs:` as `ruff:`, in place of `orbss/ruff@1.0.0`. This is what `orb-tools/continue` does for `.circleci/test-deploy.yml`.
 
 ### Updating the Ruff version
 

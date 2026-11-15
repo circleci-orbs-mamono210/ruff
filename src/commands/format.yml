@@ -1,9 +1,11 @@
 ---
 description: >
-  Execute 'ruff format', the Ruff formatter.
+  Execute 'ruff format', the Ruff formatter. Run ruff/install first.
 
   The default mode is 'check', which reports the files that would be
-  reformatted instead of rewriting them.
+  reformatted instead of rewriting them. The 'format' example gates on both
+  the linter and the formatter, and 'overrides' sets individual settings
+  with 'config_overrides'.
 parameters:
   cache_dir:
     default: ''
@@ -34,8 +36,10 @@ parameters:
       Newline separated list of TOML 'KEY = VALUE' pairs, each passed as its
       own ruff '--config' argument, for example
       'format.quote-style = "single"'. These take precedence over every
-      config file. One pair per line, because a TOML pair contains
-      whitespace and cannot be split on it. Blank lines are ignored.
+      config file, but 'line_length' wins over a 'line-length' here, and when
+      two lines set the same key the first one wins. One pair per line,
+      because a TOML pair contains whitespace and cannot be split on it.
+      Blank lines are ignored.
     type: string
   excluded_paths:
     default: ''
@@ -103,9 +107,9 @@ parameters:
     description: >
       Maximum line length the formatter wraps to (ruff '--line-length').
       Empty keeps Ruff's default of 88 or the value from the config file.
-      Keep this in step with the 'line_length' used by 'ruff/check', because
-      the formatter and the 'E501' rule are configured independently on the
-      command line.
+      It wins over a 'line-length' in 'config_overrides'. Keep this in step
+      with the 'line_length' used by 'ruff/check', because the formatter and
+      the 'E501' rule are configured independently on the command line.
     type: string
   mode:
     default: check

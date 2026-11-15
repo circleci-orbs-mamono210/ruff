@@ -1,0 +1,21 @@
+---
+description: >
+  The minimal configuration. ruff/install without 'version' installs Ruff
+  0.16.2, the version this release of the Orb is tested with, and ruff/check
+  checks the working directory recursively with Ruff's default rule set. The
+  job fails when Ruff reports a violation.
+usage:
+  version: 2.1
+  orbs:
+    ruff: orbss/ruff@1.0.0
+  jobs:
+    execute-ruff:
+      executor: ruff/default
+      steps:
+        - checkout
+        - ruff/install
+        - ruff/check
+  workflows:
+    use-my-orb:
+      jobs:
+        - execute-ruff

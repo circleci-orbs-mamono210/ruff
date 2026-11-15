@@ -4,12 +4,15 @@ description: >
   larger rule set than the 'E4,E7,E9,F' it shipped with before, so a first
   run against an established codebase usually reports a great deal. Pinning
   the old default set and adding back only the rules the previous tooling
-  covered keeps the change reviewable, and 'exit_zero' on a second reporting
-  step shows how much work adopting the full set would be.
+  covered keeps the change reviewable. A second step reports on Ruff's
+  default set with 'exit_zero', so its violations do not fail it; it runs
+  only when the gate passed, and a configuration error still fails it. The
+  Orb does not compare Ruff's findings with those of flake8 or isort, so
+  compare them on the code before removing the old steps.
 usage:
   version: 2.1
   orbs:
-    ruff: orbss/ruff@x.y.z
+    ruff: orbss/ruff@1.0.0
   jobs:
     execute-ruff:
       executor: ruff/default
@@ -28,8 +31,9 @@ usage:
             selected_rules: E4,E7,E9,F
             targets: src
 
-        # Report only. Shows what the current default set would add, without
-        # blocking the pipeline on it.
+        # Report only. Shows what Ruff's default set reports, without gating
+        # on its violations. Ruff 0.16.2's default set leaves out 18 rules of
+        # 'E4,E7,E9,F', which the step above still checks.
         - ruff/check:
             exit_zero: true
             output_file: reports/ruff-full.txt

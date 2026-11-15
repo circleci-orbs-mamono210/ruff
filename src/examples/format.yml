@@ -7,7 +7,7 @@ description: >
 usage:
   version: 2.1
   orbs:
-    ruff: orbss/ruff@x.y.z
+    ruff: orbss/ruff@1.0.0
   jobs:
     execute-ruff:
       executor: ruff/default
